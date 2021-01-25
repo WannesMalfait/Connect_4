@@ -5,10 +5,19 @@ pub mod transposition_table;
 
 pub mod game_solver {
 
+    use std::io::prelude::*;
+    use std::io::{self, BufReader};
+    use std::{
+        fs::{self, File},
+        path::PathBuf,
+    };
+
+    use std::num::ParseIntError;
+    use std::time::Instant;
+
     use crate::position::{self, Position};
     use crate::solver::Solver;
-    use std::time::Instant;
-    use std::{io, num::ParseIntError};
+
     pub struct Parser {
         solver: Solver,
         weak: bool,
@@ -28,6 +37,7 @@ pub mod game_solver {
                     "toggle-weak",
                     "commands/help",
                     "clear-tt",
+                    "bench",
                     "quit",
                 ]
                 .iter()
@@ -78,6 +88,12 @@ pub mod game_solver {
                         }
                         "clear-tt" => {
                             self.solver.reset_transposition_table();
+                            println!("Cleared transposition table");
+                        }
+                        "bench" => {
+                            if let Err(e) = Self::handle_bench(args, self.weak) {
+                                println!("Problem running benches: {}", e);
+                            }
                         }
                         "quit" => {
                             break;
@@ -97,7 +113,7 @@ pub mod game_solver {
             &mut self,
             args: std::str::Split<char>,
             pos: &mut Position,
-        ) -> Result<(), ParseIntError> {
+        ) -> std::result::Result<(), ParseIntError> {
             let moves = args
                 .map(|m| m.parse())
                 .collect::<Result<Vec<position::Column>, _>>()?;
@@ -116,7 +132,7 @@ pub mod game_solver {
         }
 
         fn solve(&mut self, pos: &Position) {
-            let score = self.solver.solve(&pos, self.weak);
+            let score = self.solver.solve(&pos, self.weak, true);
             if score > 0 {
                 print!(
                     "Score: {}, which means '{}' can win",
@@ -137,6 +153,104 @@ pub mod game_solver {
                 print!("Score: {}, which means it's a draw", score);
             }
             println!();
+        }
+        fn handle_bench(mut args: std::str::Split<char>, weak: bool) -> std::io::Result<()> {
+            let first = args.next().ok_or(std::io::ErrorKind::InvalidInput)?;
+            if first == "all" {
+                let paths = fs::read_dir("./benchmark_files")?;
+                for dir in paths {
+                    bench_file(dir?.path(), args.next(), weak)?;
+                }
+            } else {
+                bench_file(PathBuf::from(first), args.next(), weak)?;
+            }
+            Ok(())
+        }
+    }
+    fn conv_score(score: isize, weak: bool) -> isize {
+        if weak {
+            if score > 0 {
+                1
+            } else if score < 0 {
+                -1
+            } else {
+                0
+            }
+        } else {
+            score
+        }
+    }
+
+    fn average<T>(list: Vec<T>) -> f64
+    where
+        f64: std::convert::From<T>,
+    {
+        let mut sum = 0.0;
+        let length = list.len();
+        if length == 0 {
+            return 0.0;
+        }
+        for el in list {
+            let el: f64 = el.into();
+            sum += el;
+        }
+        sum / (length as f64)
+    }
+
+    /// Calls solve on the positions in the file. Returns `Err` if
+    /// the file couldn't be read. If `max_lines` is not `None`, it
+    /// will only run the lines upto `max_lines`.
+    ///
+    /// The recorded times are averaged, as well as the number of nodes.
+    /// These are then printed to std_out. If the solver returns the wrong
+    /// score, `Err` is returned.
+    pub fn bench_file(path: PathBuf, max_lines: Option<&str>, weak: bool) -> std::io::Result<()> {
+        println!("Starting benchmark: {}", path.display());
+        let file = File::open(path)?;
+        let file = BufReader::new(file);
+        if let Ok(max_lines) = max_lines.unwrap_or("0").parse() {
+            let mut solver = Solver::new();
+            let mut times = Vec::with_capacity(max_lines);
+            let mut nodes = Vec::with_capacity(max_lines);
+            for (i, line) in file.lines().enumerate() {
+                // println!("line {}: {}", i + 1, line.unwrap());
+                let line = line?;
+                let mut parts = line.trim().split(' ');
+                if let Some(position_str) = parts.next() {
+                    if let Some(pos) = Position::from_string(position_str) {
+                        solver.reset_node_count();
+                        let now = Instant::now();
+                        let score = conv_score(solver.solve(&pos, weak, false), weak);
+                        times.push(now.elapsed().as_secs_f64());
+                        nodes.push(solver.get_node_count() as f64);
+                        if let Some(expected_result) = parts.next() {
+                            if let Ok(expected_result) = expected_result.parse::<isize>() {
+                                if score != conv_score(expected_result, weak) {
+                                    println!(
+                                        "Expected score: {}, got: {} in pos {} on line {}",
+                                        conv_score(expected_result, weak),
+                                        score,
+                                        position_str,
+                                        i
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    println!("Couldn't parse line {}: {}", i, line);
+                }
+                if i + 1 == max_lines {
+                    break;
+                }
+            }
+            println!("Finished benchmark");
+            println!("Average time: {:?}", average(times));
+            println!("Average number of nodes: {:?}", average(nodes));
+            Ok(())
+        } else {
+            println!("Invalid number of max lines");
+            Err(io::Error::from(io::ErrorKind::InvalidInput))
         }
     }
 }

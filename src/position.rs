@@ -160,6 +160,22 @@ impl Position {
         }
         PlayResult::Ok
     }
+    pub fn from_string(position_str: &str) -> Option<Self> {
+        let mut pos = Position::new();
+        let seq = position_str
+            .chars()
+            .map(|m| {
+                m.to_digit(10).unwrap_or_else(|| {
+                    println!("Invalid char {}, set to collumn 1 as default", m);
+                    1
+                }) as Column
+            })
+            .collect::<Vec<Column>>();
+        match play_result_ok(pos.play_sequence(&seq)) {
+            true => Some(pos),
+            false => None,
+        }
+    }
 
     ///
     ///return true if current player can win next move

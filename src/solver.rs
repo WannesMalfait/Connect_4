@@ -151,12 +151,12 @@ impl Solver {
 
     /// Get a score for the current position, if `weak` is true, then only a weak solve
     /// is done, i.e. we only check if it is a win a draw or a loss, but without a score.
-    /// Prints search info to `std_out`.
+    /// Prints search info to `std_out` if `output` is set to `true`.
     ///
     /// A positive score means it's winning for the current player and a negative score means
     /// that it's losing. A score of zero means it's a draw with best play. A score of 1 means
     /// that the current player can win with his last stone, 2 with his second to last stone...
-    pub fn solve(&mut self, pos: &Position, weak: bool) -> isize {
+    pub fn solve(&mut self, pos: &Position, weak: bool, output: bool) -> isize {
         // check if win in one move as the Negamax function does not support this case.
         if pos.can_win_next() {
             return Self::num_stones_left(1, pos);
@@ -178,7 +178,9 @@ impl Solver {
             } else if med >= 0 && max / 2 > med {
                 med = max / 2;
             }
-            println!("Searching: alpha {} beta {}", med, med + 1);
+            if output {
+                println!("Searching: alpha {} beta {}", med, med + 1);
+            }
             // use a null depth window to know if the actual score is greater or smaller than med
             let r = self.negamax(pos, med, med + 1);
             if r <= med {
@@ -186,12 +188,14 @@ impl Solver {
             } else {
                 min = r;
             }
-            println!(
-                "took: {:?} with {} nodes, kn/s: {:.1}",
-                now.elapsed(),
-                self.get_node_count() - nodes,
-                (self.get_node_count() - nodes) as f64 / now.elapsed().as_secs_f64() / 1000.0,
-            );
+            if output {
+                println!(
+                    "took: {:?} with {} nodes, kn/s: {:.1}",
+                    now.elapsed(),
+                    self.get_node_count() - nodes,
+                    (self.get_node_count() - nodes) as f64 / now.elapsed().as_secs_f64() / 1000.0,
+                );
+            }
         }
         min
     }
@@ -206,7 +210,7 @@ impl Solver {
                 } else {
                     let mut pos2 = Position::from(*pos);
                     pos2.play_col(col);
-                    scores[col as usize] = -self.solve(&pos2, weak);
+                    scores[col as usize] = -self.solve(&pos2, weak, true);
                 }
             }
         }
