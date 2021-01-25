@@ -112,29 +112,31 @@ pub mod game_solver {
             for score in scores {
                 print!(" {} ", score);
             }
-            println!("");
+            println!();
         }
 
         fn solve(&mut self, pos: &Position) {
             let score = self.solver.solve(&pos, self.weak);
             if score > 0 {
                 print!(
-                    "Score: {}, which means '{}' can win in {} move(s)",
+                    "Score: {}, which means '{}' can win",
                     score,
-                    pos.current_player().1,
-                    ((Position::HEIGHT * Position::WIDTH) as isize - score) / 2
+                    pos.current_player().1
                 );
             } else if score < 0 {
                 print!(
-                    "Score: {}, which means '{}' can win in {} move(s)",
+                    "Score: {}, which means '{}' can win",
                     score,
                     pos.current_player().0,
-                    ((Position::HEIGHT * Position::WIDTH) as isize + score) / 2
                 );
-            } else {
+            }
+            if !self.weak {
+                print!(" in {} move(s)", Solver::score_to_moves_to_win(&pos, score),);
+            }
+            if score == 0 {
                 print!("Score: {}, which means it's a draw", score);
             }
-            println!("");
+            println!();
         }
     }
 }

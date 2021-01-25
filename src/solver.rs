@@ -13,17 +13,22 @@ pub struct Solver {
 }
 impl Solver {
     const INVALID_MOVE: isize = -1000;
-    // const TABLE_SIZE: usize = 24;
+
+    /// Nodes visited since last reset.
     pub fn get_node_count(&self) -> u64 {
         self.node_count
     }
+    /// Reset the counter to 0.
     pub fn reset_node_count(&mut self) {
         self.node_count = 0;
     }
+    /// Clear the transposition table of entries
     pub fn reset_transposition_table(&mut self) {
         self.trans_table.reset();
     }
 
+    /// Initializes the solver with a transposition table and move
+    /// ordering heuristics.
     pub fn new() -> Self {
         let mut column_order = [0; Position::WIDTH as usize];
         // initialize the column exploration order, starting with center columns
@@ -40,12 +45,14 @@ impl Solver {
         }
     }
 
+    /// Get the number of stones left for one player in the given position offset by `addend` moves.
     #[inline]
     fn num_stones_left(addend: isize, pos: &Position) -> isize {
         ((Position::WIDTH * Position::HEIGHT) as isize + addend - pos.nb_moves() as isize) / 2
     }
 
-    pub fn negamax(&mut self, pos: &Position, mut alpha: isize, mut beta: isize) -> isize {
+    /// Main alpha-beta search function.
+    fn negamax(&mut self, pos: &Position, mut alpha: isize, mut beta: isize) -> isize {
         debug_assert!(alpha < beta);
         debug_assert!(!pos.can_win_next());
         // increment number of explored nodes
@@ -142,6 +149,13 @@ impl Solver {
         alpha
     }
 
+    /// Get a score for the current position, if `weak` is true, then only a weak solve
+    /// is done, i.e. we only check if it is a win a draw or a loss, but without a score.
+    /// Prints search info to `std_out`.
+    ///
+    /// A positive score means it's winning for the current player and a negative score means
+    /// that it's losing. A score of zero means it's a draw with best play. A score of 1 means
+    /// that the current player can win with his last stone, 2 with his second to last stone...
     pub fn solve(&mut self, pos: &Position, weak: bool) -> isize {
         // check if win in one move as the Negamax function does not support this case.
         if pos.can_win_next() {
@@ -165,7 +179,8 @@ impl Solver {
                 med = max / 2;
             }
             println!("Searching: alpha {} beta {}", med, med + 1);
-            let r = self.negamax(pos, med, med + 1); // use a null depth window to know if the actual score is greater or smaller than med
+            // use a null depth window to know if the actual score is greater or smaller than med
+            let r = self.negamax(pos, med, med + 1);
             if r <= med {
                 max = r;
             } else {
@@ -181,6 +196,7 @@ impl Solver {
         min
     }
 
+    /// Get a score for all the columns that can be played by calling `solve()`.
     pub fn analyze(&mut self, pos: &Position, weak: bool) -> Vec<isize> {
         let mut scores = vec![Self::INVALID_MOVE; Position::WIDTH as usize];
         for col in 0..Position::WIDTH {
@@ -196,6 +212,15 @@ impl Solver {
         }
         scores
     }
+    /// Convert a score to the number of moves till the winning player can win.
+    /// Should not be called with score 0, which is a draw
+    pub fn score_to_moves_to_win(pos: &Position, score: isize) -> isize {
+        if score > 0 {
+            Self::num_stones_left(1, pos) - score + 1
+        } else {
+            Self::num_stones_left(0, pos) + score + 1
+        }
+    }
 }
 
 #[cfg(test)]
@@ -207,5 +232,22 @@ pub mod tests {
         if Position::WIDTH == 7 {
             assert_eq!(s.column_order, [3, 2, 4, 1, 5, 0, 6]);
         }
+    }
+    #[test]
+    fn test_scores() {
+        let mut pos = Position::new();
+        pos.play_sequence(&[4, 4, 5]);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, 2), 19);
+        pos.play_col(3);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, -2), 18);
+        pos.play_col(7);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, 2), 18);
+        pos.play_col(6);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, -2), 17);
+        pos = Position::new();
+        pos.play_sequence(&[4, 4, 5, 5]);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, 18), 2);
+        pos.play_col(3);
+        assert_eq!(Solver::score_to_moves_to_win(&pos, -18), 1);
     }
 }
