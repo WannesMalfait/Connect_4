@@ -6,7 +6,7 @@ pub mod transposition_table;
 pub mod game_solver {
 
     use std::io::prelude::*;
-    use std::io::{self, BufReader};
+    use std::io::{self, BufReader, Write};
     use std::{
         fs::{self, File},
         path::PathBuf,
@@ -54,22 +54,24 @@ pub mod game_solver {
                     match &first.to_lowercase() as &str {
                         "moves" | "play" | "move" => {
                             if let Err(e) = self.handle_moves(args, &mut pos) {
-                                println!("Moves should be numbers, got: {}", e);
+                                eprintln!("Moves should be numbers, got: {}", e);
                             }
+                            println!("\nCurrent position:");
                             pos.display_position();
                         }
                         "position" => {
                             pos = Position::new();
                             if let Err(e) = self.handle_moves(args, &mut pos) {
-                                println!("Moves should be numbers, got: {}", e);
+                                eprintln!("Moves should be numbers, got: {}", e);
                             }
+                            println!("\nCurrent position:");
                             pos.display_position();
                         }
                         "solve" => {
                             let now = Instant::now();
                             self.solver.reset_node_count();
                             self.solve(&pos);
-                            println!("Nodes searched: {}", self.solver.get_node_count());
+                            println!("\nNodes searched: {}", self.solver.get_node_count());
                             println!("Took {:?}", now.elapsed());
                         }
                         "analyze" => {
@@ -92,14 +94,15 @@ pub mod game_solver {
                         }
                         "bench" => {
                             if let Err(e) = Self::handle_bench(args, self.weak) {
-                                println!("Problem running benches: {}", e);
+                                eprintln!("Problem running benches: {}", e);
                             }
                         }
                         "quit" => {
                             break;
                         }
                         _ => {
-                            println!("Don't know the command: {}", first);
+                            eprintln!("Don't know the command: {}", first);
+                            println!("Valid commands are: {:?}", self.commands);
                         }
                     }
                 }
@@ -133,6 +136,7 @@ pub mod game_solver {
 
         fn solve(&mut self, pos: &Position) {
             let score = self.solver.solve(&pos, self.weak, true);
+            println!();
             if score > 0 {
                 print!(
                     "Score: {}, which means '{}' can win",
@@ -203,9 +207,9 @@ pub mod game_solver {
     ///
     /// The recorded times are averaged, as well as the number of nodes.
     /// These are then printed to std_out. If the solver returns the wrong
-    /// score, `Err` is returned.
+    /// score, an error message is printed, but the benchmark continues.
     pub fn bench_file(path: PathBuf, max_lines: Option<&str>, weak: bool) -> std::io::Result<()> {
-        println!("Starting benchmark: {}", path.display());
+        println!("\nStarting benchmark: {}", path.display());
         let file = File::open(path)?;
         let file = BufReader::new(file);
         if let Ok(max_lines) = max_lines.unwrap_or("0").parse() {
@@ -213,11 +217,12 @@ pub mod game_solver {
             let mut times = Vec::with_capacity(max_lines);
             let mut nodes = Vec::with_capacity(max_lines);
             for (i, line) in file.lines().enumerate() {
-                // println!("line {}: {}", i + 1, line.unwrap());
                 let line = line?;
                 let mut parts = line.trim().split(' ');
                 if let Some(position_str) = parts.next() {
                     if let Some(pos) = Position::from_string(position_str) {
+                        print!("\rProcessing line: {}...", i + 1);
+                        io::stdout().flush().unwrap();
                         solver.reset_node_count();
                         let now = Instant::now();
                         let score = conv_score(solver.solve(&pos, weak, false), weak);
@@ -226,7 +231,7 @@ pub mod game_solver {
                         if let Some(expected_result) = parts.next() {
                             if let Ok(expected_result) = expected_result.parse::<isize>() {
                                 if score != conv_score(expected_result, weak) {
-                                    println!(
+                                    eprintln!(
                                         "Expected score: {}, got: {} in pos {} on line {}",
                                         conv_score(expected_result, weak),
                                         score,
@@ -238,18 +243,18 @@ pub mod game_solver {
                         }
                     }
                 } else {
-                    println!("Couldn't parse line {}: {}", i, line);
+                    eprintln!("Couldn't parse line {}: {}", i, line);
                 }
                 if i + 1 == max_lines {
                     break;
                 }
             }
-            println!("Finished benchmark");
+            println!("\n\nFinished benchmark");
             println!("Average time: {:?}", average(times));
             println!("Average number of nodes: {:?}", average(nodes));
             Ok(())
         } else {
-            println!("Invalid number of max lines");
+            eprintln!("Invalid number of max lines");
             Err(io::Error::from(io::ErrorKind::InvalidInput))
         }
     }
