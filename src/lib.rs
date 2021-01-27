@@ -5,12 +5,12 @@ pub mod transposition_table;
 
 pub mod game_solver {
 
-    use std::io::prelude::*;
     use std::io::{self, BufReader, Write};
     use std::{
         fs::{self, File},
         path::PathBuf,
     };
+    use std::{io::prelude::*, vec};
 
     use std::num::ParseIntError;
     use std::time::Instant;
@@ -48,6 +48,8 @@ pub mod game_solver {
         pub fn run(&mut self) -> io::Result<()> {
             let mut pos = Position::new();
             let mut input = String::new();
+            print!("> ");
+            io::stdout().flush()?;
             while let Ok(_) = io::stdin().read_line(&mut input) {
                 let mut args = input.trim().split(' ');
                 if let Some(first) = args.next() {
@@ -106,8 +108,9 @@ pub mod game_solver {
                         }
                     }
                 }
-
                 input = String::from("");
+                print!("\n> ");
+                io::stdout().flush()?;
             }
             Ok(())
         }
@@ -127,37 +130,43 @@ pub mod game_solver {
         }
         fn analyze(&mut self, pos: &Position) {
             let scores = self.solver.analyze(&pos, self.weak);
-            print!("Scores for the columns: ");
-            for score in scores {
-                print!(" {} ", score);
+            if let Some(mut max) = scores.get(0) {
+                print!("\nScores for the playable columns: ");
+                for score in &scores {
+                    print!(" {} ", score);
+                    if score > max {
+                        max = score;
+                    }
+                }
+                print!("\nThe best score is: {}", max);
+                self.explain_score(pos, *max);
+            } else {
+                println!("No playable columns")
             }
-            println!();
+            println!("\n");
         }
 
         fn solve(&mut self, pos: &Position) {
             let score = self.solver.solve(&pos, self.weak, true);
+            print!("\nScore is {}", score);
+            self.explain_score(pos, score);
             println!();
+        }
+
+        fn explain_score(&mut self, pos: &Position, score: isize) {
             if score > 0 {
-                print!(
-                    "Score: {}, which means '{}' can win",
-                    score,
-                    pos.current_player().1
-                );
+                print!(", which means '{}' can win", pos.current_player().1);
             } else if score < 0 {
-                print!(
-                    "Score: {}, which means '{}' can win",
-                    score,
-                    pos.current_player().0,
-                );
+                print!(", which means '{}' can win", pos.current_player().0,);
             }
             if !self.weak {
                 print!(" in {} move(s)", Solver::score_to_moves_to_win(&pos, score),);
             }
             if score == 0 {
-                print!("Score: {}, which means it's a draw", score);
+                print!(", which means it's a draw");
             }
-            println!();
         }
+
         fn handle_bench(mut args: std::str::Split<char>, weak: bool) -> std::io::Result<()> {
             let first = args.next().ok_or(std::io::ErrorKind::InvalidInput)?;
             if first == "all" {
