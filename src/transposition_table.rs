@@ -107,6 +107,39 @@ impl TranspositionTable {
     }
 }
 
+#[derive(Clone, Copy)]
+struct BookEntry {
+    /// The key of the position
+    pos: KeyType,
+    /// A move with the best possible score
+    bmove: position::Bitboard,
+    /// The best possible score in the position
+    score: ValueType,
+}
+pub struct OpeningBook {
+    entries: Vec<BookEntry>,
+}
+
+impl OpeningBook {
+    /// Load an opening book from a file. If errors occured while
+    /// loading or parsing the file an `Err` is returned.
+    pub fn load_book(path: String) -> std::io::Result<Self> {
+        todo!("Read file in path: {} and store keys and values", path);
+    }
+    /// Get the associated value of the given `key`. If no entry was found
+    /// it returns `None`, otherwise it returns `Some(score)`.
+    pub fn get(&self, key: KeyType) -> Option<(position::Bitboard, ValueType)> {
+        if let Ok(pos) = self.entries.binary_search_by_key(&key, |entry| entry.pos) {
+            let entry = self.entries[pos];
+            Some((entry.bmove, entry.score))
+        } else {
+            None
+        }
+    }
+    // fn index(&self, key: KeyType) -> usize {
+    //     (key % self.size) as usize
+    // }
+}
 #[cfg(test)]
 mod tests {
     use position::{Column, Position};
