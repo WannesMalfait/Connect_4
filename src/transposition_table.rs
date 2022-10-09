@@ -114,21 +114,105 @@ struct BookEntry {
     /// A move with the best possible score
     bmove: position::Bitboard,
     /// The best possible score in the position
-    score: ValueType,
+    score: isize,
 }
+
+/// An `OpeningBook` is a way to store the best moves in common positions
+/// in the opening, which might take a long time to solve. For each position
+/// in the opening book we store the best move and the score associated with
+/// this move.
+///
+/// **Warning**: Only one entry is stored per position.
 pub struct OpeningBook {
     entries: Vec<BookEntry>,
 }
 
+impl From<Vec<BookEntry>> for OpeningBook {
+    fn from(vec: Vec<BookEntry>) -> Self {
+        let mut book = OpeningBook { entries: vec };
+        if book.is_valid() {
+            return book;
+        }
+        book.entries.sort_unstable_by_key(|entry| entry.pos);
+        book.entries.dedup_by_key(|entry| entry.pos);
+        assert!(book.is_valid());
+        book
+    }
+}
+
+/// A struct which helps to iterate over the possible book moves in a given position.
+pub struct BookMoves<'a> {
+    book: &'a OpeningBook,
+    pos: position::Position,
+    next_col: position::Column,
+}
+
+impl Iterator for BookMoves<'_> {
+    type Item = position::Column;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for col in self.next_col..(position::Position::WIDTH) {
+            if !self.pos.can_play(col) {
+                continue;
+            }
+            let mut next_pos = self.pos.clone();
+            next_pos.play_col(col);
+            let key = next_pos.key();
+            if self.book.get(key).is_some() {
+                self.next_col = col + 1;
+                return Some(col);
+            }
+        }
+        self.next_col = position::Position::WIDTH;
+        None
+    }
+}
+
+impl Default for OpeningBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpeningBook {
+    #[must_use]
+    pub fn new() -> Self {
+        OpeningBook {
+            entries: Vec::new(),
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        // `is_sorted()` is unstable, so create our own version.
+        let mut prev = match self.entries.first() {
+            Some(e) => e.pos,
+            None => return true,
+        };
+        return self
+            .entries
+            .iter()
+            .skip(1)
+            .map(|entry| entry.pos)
+            .all(move |curr| {
+                if prev >= curr {
+                    // A position can appear at most once!
+                    return false;
+                };
+                prev = curr;
+                true
+            });
+    }
+
     /// Load an opening book from a file. If errors occured while
     /// loading or parsing the file an `Err` is returned.
     pub fn load_book(path: String) -> std::io::Result<Self> {
         todo!("Read file in path: {} and store keys and values", path);
     }
+
     /// Get the associated value of the given `key`. If no entry was found
-    /// it returns `None`, otherwise it returns `Some(score)`.
-    pub fn get(&self, key: KeyType) -> Option<(position::Bitboard, ValueType)> {
+    /// it returns `None`, otherwise it returns `Some(bmove, score)`.
+    #[must_use]
+    pub fn get(&self, key: KeyType) -> Option<(position::Bitboard, isize)> {
         if let Ok(pos) = self.entries.binary_search_by_key(&key, |entry| entry.pos) {
             let entry = self.entries[pos];
             Some((entry.bmove, entry.score))
@@ -136,9 +220,41 @@ impl OpeningBook {
             None
         }
     }
-    // fn index(&self, key: KeyType) -> usize {
-    //     (key % self.size) as usize
-    // }
+
+    /// Insert an entry in the book for the given key of the position.
+    /// If the position is already in the book, it is overwritten.
+    pub fn put(&mut self, key: KeyType, bmove: position::Bitboard, score: isize) {
+        let entry = BookEntry {
+            pos: key,
+            bmove,
+            score,
+        };
+        match self.entries.binary_search_by_key(&key, |entry| entry.pos) {
+            Ok(index) => {
+                // We already have an entry, so just overwrite it.
+                self.entries[index] = entry;
+            }
+            Err(index) => self.entries.insert(index, entry),
+        }
+    }
+
+    /// Insert an entry in the book for the given position.
+    /// If the position is already in the book, it is overwritten.
+    #[inline]
+    pub fn put_pos(&mut self, pos: &position::Position, bmove: position::Bitboard, score: isize) {
+        self.put(pos.key(), bmove, score);
+    }
+
+    /// Get the playable moves from this position that are in the book.
+    /// The moves are sorted by collumn.
+    #[must_use]
+    pub fn book_moves_from_position(&self, pos: position::Position) -> BookMoves {
+        BookMoves {
+            book: self,
+            pos,
+            next_col: 0,
+        }
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -146,6 +262,8 @@ mod tests {
 
     use crate::position;
 
+    use super::BookEntry;
+    use super::OpeningBook;
     use super::TranspositionTable;
     #[test]
     fn inserts_and_gets() {
@@ -164,5 +282,72 @@ mod tests {
                 assert_eq!(tb.get(key), Some(score));
             }
         }
+    }
+
+    #[test]
+    fn adding_book_entries() {
+        let mut book = OpeningBook::new();
+        let mut pos = position::Position::new();
+        assert_eq!(book.get(pos.key()), None);
+        for j in 0..20 {
+            pos.play_col(j * 5 % Position::WIDTH);
+            let key = pos.key();
+            assert_eq!(book.get(key), None);
+            for i in 0..Position::WIDTH {
+                println!("Inserting {key}");
+                let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
+                let score = pos.move_score(bmove) as Column;
+                // Just for testing we put in dummy score and best move.
+                book.put(key, bmove, score.into());
+                assert_eq!(book.get(key), Some((bmove, isize::from(score))));
+            }
+        }
+        assert!(book.is_valid());
+    }
+    #[test]
+    fn adding_book_entries_at_once() {
+        let mut pos = position::Position::new();
+        let mut entries = Vec::new();
+        for j in 0..20 {
+            pos.play_col(j * 5 % Position::WIDTH);
+            let key = pos.key();
+            // Opening book can only store one entry per position, so only one of these will get added.
+            // Since the sorting is unstable, there is no guarantee about which entry is added.
+            for i in 0..Position::WIDTH {
+                println!("Inserting {key}");
+                let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
+                let score = pos.move_score(bmove) as Column;
+                // Just for testing we put in dummy score and best move.
+                entries.push(BookEntry {
+                    pos: key,
+                    bmove,
+                    score: score.into(),
+                });
+            }
+        }
+        let book = OpeningBook::from(entries);
+        assert!(book.is_valid());
+    }
+
+    #[test]
+    fn book_moves() {
+        let mut pos = position::Position::new();
+        let mut book = OpeningBook::new();
+        book.put_pos(&pos, 0u64, 0);
+        let mut moves = book.book_moves_from_position(pos.clone());
+        // No book moves in starting position.
+        assert_eq!(moves.next(), None);
+        // Add 2 moves in the book.
+        pos.play_col(0);
+        book.put_pos(&pos, 0u64, 0);
+        pos = position::Position::new();
+        pos.play_col(2);
+        book.put_pos(&pos, 0u64, 0);
+        pos = position::Position::new();
+        // Look at moves from the starting position
+        let mut moves = book.book_moves_from_position(pos);
+        assert_eq!(moves.next(), Some(0));
+        assert_eq!(moves.next(), Some(2));
+        assert_eq!(moves.next(), None);
     }
 }

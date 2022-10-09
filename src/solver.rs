@@ -133,7 +133,7 @@ impl Solver {
             }
         }
         for bmove in moves {
-            let mut pos2 = *pos;
+            let mut pos2 = pos.clone();
             pos2.play(bmove);
             let score = -self.negamax(&pos2, -beta, -alpha);
             if score >= beta {
@@ -217,7 +217,7 @@ impl Solver {
                 if pos.is_winning_move(col) {
                     scores[col as usize] = Self::num_stones_left(1, pos);
                 } else {
-                    let mut pos2 = *pos;
+                    let mut pos2 = pos.clone();
                     pos2.play_col(col);
                     scores[col as usize] = -self.solve(&pos2, weak, true);
                 }
