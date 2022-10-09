@@ -73,6 +73,8 @@ pub enum PlayResult {
     AlreadyWinning(Column),
 }
 /// Handle the enum type, and print appropriate error messages
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn play_result_ok(result: PlayResult) -> bool {
     match result {
         PlayResult::Ok => true,
@@ -138,8 +140,8 @@ impl Position {
     /// You can check if the move sequence was valid by calling `play_result_ok()` on the
     /// returned value.
     pub fn play_sequence(&mut self, seq: &[Column]) -> PlayResult {
-        for i in 0..seq.len() {
-            if let Some(col) = seq[i].checked_sub(1) {
+        for col_1_based in seq {
+            if let Some(col) = col_1_based.checked_sub(1) {
                 if col >= Position::WIDTH {
                     return PlayResult::TooBig(col);
                 } else if !self.can_play(col) {
@@ -157,6 +159,7 @@ impl Position {
 
     /// Create a position from a string of moves with no spaces in between
     /// If something went wrong with parsing `None` is returned.
+    #[must_use]
     pub fn from_string(position_str: &str) -> Option<Self> {
         let mut pos = Position::new();
         let seq = position_str
@@ -168,23 +171,27 @@ impl Position {
                 }) as Column
             })
             .collect::<Vec<Column>>();
-        match play_result_ok(pos.play_sequence(&seq)) {
-            true => Some(pos),
-            false => None,
+        if play_result_ok(pos.play_sequence(&seq)) {
+            Some(pos)
+        } else {
+            None
         }
     }
 
     /// return true if the current player can win next move.
+    #[must_use]
     pub fn can_win_next(&self) -> bool {
         (self.winning_position() & self.possible()) != 0
     }
 
     /// return the number of moves played since the beginning of the game.
+    #[must_use]
     pub fn nb_moves(&self) -> u8 {
         self.moves
     }
 
     /// returns a compact representation of a position on WIDTH*(HEIGHT+1) bits.
+    #[must_use]
     pub fn key(&self) -> Bitboard {
         self.current_position + self.mask
     }
@@ -192,7 +199,7 @@ impl Position {
     /// Build a symetric base 3 key. Two symetric positions will have the same key.
     ///
     /// This key is a base 3 representation of the sequence of played moves column per column,
-    /// from bottom to top. The 3 digits are top_of_colum(0), current_player(1), opponent(2).
+    /// from bottom to top. The 3 digits are `top_of_colum(0)`, `current_player(1)`, `opponent(2)`.
     ///
     /// example: game "45" where player one played colum 4, then player two played column 5
     /// has a representation in base 3 digits : 0 0 0 1 0 2 0 0 0 or : 3*3^3 + 1*3^5
@@ -202,7 +209,8 @@ impl Position {
     ///
     /// as the last digit is always 0, we omit it and a base 3 key
     /// uses N = (nbMoves + nbColums - 1) base 3 digits or N*log2(3) bits.
-    pub fn key3(&mut self) -> u64 {
+    #[must_use]
+    pub fn key3(&self) -> u64 {
         let mut key_forward = 0;
         for i in 0..Position::WIDTH {
             // compute key in increasing order of columns
@@ -210,7 +218,7 @@ impl Position {
         }
         let mut key_reverse = 0;
         // compute key in decreasing order of columns
-        for i in Position::WIDTH..0 {
+        for i in (0..Position::WIDTH).rev() {
             self.partial_key3(&mut key_reverse, i);
         }
         // take the smallest key and divide per 3 as the last base3 digit is always 0
@@ -227,20 +235,19 @@ impl Position {
     /// WARNING: this function is intended to test position where you cannot win in one turn
     /// If you have a winning move, this function can miss it and prefer to prevent the opponent
     /// to make an alignment.
+    #[must_use]
     pub fn possible_non_losing_moves(&self) -> Bitboard {
         debug_assert!(!self.can_win_next());
         let possible_mask = self.possible();
         let opponent_win = self.opponent_winning_position();
         let forced_moves = possible_mask & opponent_win;
-        if forced_moves != 0 {
-            if (forced_moves & (forced_moves - 1)) != 0 {
-                // check if there is more than one forced move
-                0 // the opponnent has two winning moves and you cannot stop him
-            } else {
-                forced_moves & !(opponent_win >> 1) // enforce to play the single forced move
-            }
-        } else {
+        if forced_moves == 0 {
             possible_mask & !(opponent_win >> 1) // avoid to play below an opponent winning spot
+        } else if (forced_moves & (forced_moves - 1)) == 0 {
+            forced_moves & !(opponent_win >> 1) // enforce to play the single forced move
+        } else {
+            // check if there is more than one forced move
+            0 // the opponnent has two winning moves and you cannot stop him
         }
     }
 
@@ -250,6 +257,7 @@ impl Position {
     ///
     /// The score we are using is the number of winning spots
     /// the current player has after playing the move.
+    #[must_use]
     pub fn move_score(&self, bmove: Bitboard) -> u8 {
         Self::popcount(Self::compute_winning_position(
             self.current_position | bmove,
@@ -258,6 +266,7 @@ impl Position {
     }
 
     /// Default constructor, build an empty position.
+    #[must_use]
     pub fn new() -> Position {
         Position {
             current_position: 0,
@@ -269,6 +278,7 @@ impl Position {
     /// Indicates whether a column is playable.
     /// `col` is a 0-based index of the column to play
     /// returns `true` if the column is playable, `false` if the column is already full.
+    #[must_use]
     pub fn can_play(&self, col: Column) -> bool {
         (self.mask & Self::top_mask_col(col)) == 0
     }
@@ -285,6 +295,7 @@ impl Position {
     /// This function should never be called on a non-playable column.
     /// `col` is a 0-based index of a playable column.
     /// returns `true` if the current player makes an alignment by playing the corresponding column `col`.
+    #[must_use]
     pub fn is_winning_move(&self, col: Column) -> bool {
         (self.winning_position() & self.possible() & Self::column_mask(col)) != 0
     }
@@ -299,11 +310,12 @@ impl Position {
                     print!("x");
                 }
             }
-            println!("");
+            println!();
         }
     }
     /// Returns either ("x", "o") or ("o", "x").
     /// The first element is the current player.
+    #[must_use]
     pub fn current_player(&self) -> (&str, &str) {
         match self.moves % 2 {
             0 => ("x", "o"),
@@ -319,7 +331,9 @@ impl Position {
         };
         for col in (0..Self::HEIGHT).rev() {
             for row in 0..(Self::WIDTH) {
-                if (self.mask & (1u64 << (col + row * (Self::HEIGHT + 1)))) != 0 {
+                if (self.mask & (1u64 << (col + row * (Self::HEIGHT + 1)))) == 0 {
+                    print!(".");
+                } else {
                     match self.current_position & (1u64 << (col + row * (Self::HEIGHT + 1))) {
                         0 => {
                             print!("{}", us);
@@ -328,11 +342,9 @@ impl Position {
                             print!("{}", them);
                         }
                     }
-                } else {
-                    print!(".");
                 }
             }
-            println!("");
+            println!();
         }
     }
 
@@ -341,10 +353,10 @@ impl Position {
         let mut pos = 1 << (col * (Position::HEIGHT + 1));
         while (pos & self.mask) != 0 {
             *key *= 3;
-            if (pos & self.current_position) != 0 {
-                *key += 1;
-            } else {
+            if (pos & self.current_position) == 0 {
                 *key += 2;
+            } else {
+                *key += 1;
             }
             pos <<= 1;
         }
@@ -352,85 +364,94 @@ impl Position {
     }
 
     /// Return a bitboard of the possible winning positions for the current player
+    #[must_use]
     fn winning_position(&self) -> Bitboard {
         Self::compute_winning_position(self.current_position, self.mask)
     }
 
     /// Return a bitboard of the possible winning positions for the opponent
+    #[must_use]
     fn opponent_winning_position(&self) -> Bitboard {
         Self::compute_winning_position(self.current_position ^ self.mask, self.mask)
     }
 
     /// Bitboard of the next possible valid moves for the current player
     /// including losing moves.
+    #[must_use]
     fn possible(&self) -> Bitboard {
-        return (self.mask + Self::BOTTOM_MASK) & Self::BOARD_MASK;
+        (self.mask + Self::BOTTOM_MASK) & Self::BOARD_MASK
     }
 
     /// Counts the number of bits set to one in a `u64`.
+    #[must_use]
     fn popcount(mut m: u64) -> u8 {
         let mut c: u8 = 0;
         while m != 0 {
             m &= m - 1;
             c += 1;
         }
-        return c;
+        c
     }
 
     /// Returns a bitboard of all the winning free spots making an alignment in the
     /// position `position`. The `mask` has the bits set where a spot was already played.
+    #[must_use]
     fn compute_winning_position(position: Bitboard, mask: Bitboard) -> Bitboard {
         // vertical;
         let mut r = (position << 1) & (position << 2) & (position << 3);
 
         //horizontal
-        let mut p = (position << (Self::HEIGHT + 1)) & (position << 2 * (Self::HEIGHT + 1));
-        r |= p & (position << 3 * (Self::HEIGHT + 1));
+        let mut p = (position << (Self::HEIGHT + 1)) & (position << (2 * (Self::HEIGHT + 1)));
+        r |= p & (position << (3 * (Self::HEIGHT + 1)));
         r |= p & (position >> (Self::HEIGHT + 1));
-        p = (position >> (Self::HEIGHT + 1)) & (position >> 2 * (Self::HEIGHT + 1));
+        p = (position >> (Self::HEIGHT + 1)) & (position >> (2 * (Self::HEIGHT + 1)));
         r |= p & (position << (Self::HEIGHT + 1));
-        r |= p & (position >> 3 * (Self::HEIGHT + 1));
+        r |= p & (position >> (3 * (Self::HEIGHT + 1)));
 
         //diagonal 1
-        p = (position << Self::HEIGHT) & (position << 2 * Self::HEIGHT);
-        r |= p & (position << 3 * Self::HEIGHT);
+        p = (position << Self::HEIGHT) & (position << (2 * Self::HEIGHT));
+        r |= p & (position << (3 * Self::HEIGHT));
         r |= p & (position >> Self::HEIGHT);
-        p = (position >> Self::HEIGHT) & (position >> 2 * Self::HEIGHT);
+        p = (position >> Self::HEIGHT) & (position >> (2 * Self::HEIGHT));
         r |= p & (position << Self::HEIGHT);
-        r |= p & (position >> 3 * Self::HEIGHT);
+        r |= p & (position >> (3 * Self::HEIGHT));
 
         //diagonal 2
-        p = (position << (Self::HEIGHT + 2)) & (position << 2 * (Self::HEIGHT + 2));
-        r |= p & (position << 3 * (Self::HEIGHT + 2));
+        p = (position << (Self::HEIGHT + 2)) & (position << (2 * (Self::HEIGHT + 2)));
+        r |= p & (position << (3 * (Self::HEIGHT + 2)));
         r |= p & (position >> (Self::HEIGHT + 2));
-        p = (position >> (Self::HEIGHT + 2)) & (position >> 2 * (Self::HEIGHT + 2));
+        p = (position >> (Self::HEIGHT + 2)) & (position >> (2 * (Self::HEIGHT + 2)));
         r |= p & (position << (Self::HEIGHT + 2));
-        r |= p & (position >> 3 * (Self::HEIGHT + 2));
+        r |= p & (position >> (3 * (Self::HEIGHT + 2)));
 
-        return r & (Self::BOARD_MASK ^ mask);
+        r & (Self::BOARD_MASK ^ mask)
     }
 
+    #[must_use]
     const fn bottom(width: Column, height: Column) -> Bitboard {
         if width == 0 {
             0
         } else {
-            Self::bottom(width - 1, height) | 1u64 << (width - 1) * (height + 1)
+            Self::bottom(width - 1, height) | 1u64 << ((width - 1) * (height + 1))
         }
     }
 
     // return a bitboard containg a single 1 corresponding to the top cel of a given column
+    #[must_use]
     fn top_mask_col(col: Column) -> Bitboard {
-        return 1u64 << ((Self::HEIGHT - 1) + col * (Self::HEIGHT + 1));
+        1u64 << ((Self::HEIGHT - 1) + col * (Self::HEIGHT + 1))
     }
 
     // return a bitboard containg a single 1 corresponding to the bottom cell of a given column
+    #[must_use]
     fn bottom_mask_col(col: Column) -> Bitboard {
-        return 1u64 << col * (Self::HEIGHT + 1);
+        1u64 << (col * (Self::HEIGHT + 1))
     }
 
     // return a bitboard 1 on all the cells of a given column
+    #[must_use]
     pub fn column_mask(col: Column) -> Bitboard {
-        return ((1u64 << Self::HEIGHT) - 1) << col * (Self::HEIGHT + 1);
+        ((1u64 << Self::HEIGHT) - 1) << (col * (Self::HEIGHT + 1))
     }
 }
 

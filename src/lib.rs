@@ -1,3 +1,9 @@
+#![allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss
+)]
 pub mod move_sorter;
 pub mod position;
 pub mod solver;
@@ -5,6 +11,7 @@ pub mod transposition_table;
 
 pub mod game_solver {
 
+    use std::cmp::Ordering;
     use std::io::{self, BufReader, Write};
     use std::{
         fs::{self, File},
@@ -25,6 +32,7 @@ pub mod game_solver {
     }
 
     impl Parser {
+        #[must_use]
         pub fn new(weak: bool) -> Self {
             Self {
                 solver: Solver::new(),
@@ -50,12 +58,12 @@ pub mod game_solver {
             let mut input = String::new();
             print!("> ");
             io::stdout().flush()?;
-            while let Ok(_) = io::stdin().read_line(&mut input) {
+            while io::stdin().read_line(&mut input).is_ok() {
                 let mut args = input.trim().split(' ');
                 if let Some(first) = args.next() {
                     match &first.to_lowercase() as &str {
                         "moves" | "play" | "move" => {
-                            if let Err(e) = self.handle_moves(args, &mut pos) {
+                            if let Err(e) = Parser::handle_moves(args, &mut pos) {
                                 eprintln!("Moves should be numbers, got: {}", e);
                             }
                             println!("\nCurrent position:");
@@ -63,7 +71,7 @@ pub mod game_solver {
                         }
                         "position" => {
                             pos = Position::new();
-                            if let Err(e) = self.handle_moves(args, &mut pos) {
+                            if let Err(e) = Parser::handle_moves(args, &mut pos) {
                                 eprintln!("Moves should be numbers, got: {}", e);
                             }
                             println!("\nCurrent position:");
@@ -116,12 +124,11 @@ pub mod game_solver {
         }
 
         fn handle_moves(
-            &mut self,
             args: std::str::Split<char>,
             pos: &mut Position,
         ) -> std::result::Result<(), ParseIntError> {
             let moves = args
-                .map(|m| m.parse())
+                .map(str::parse)
                 .collect::<Result<Vec<position::Column>, _>>()?;
             if position::play_result_ok(pos.play_sequence(&moves)) {
                 println!("Played columns: {:?}", moves);
@@ -129,8 +136,8 @@ pub mod game_solver {
             Ok(())
         }
         fn analyze(&mut self, pos: &Position) {
-            let scores = self.solver.analyze(&pos, self.weak);
-            if let Some(mut max) = scores.get(0) {
+            let scores = self.solver.analyze(pos, self.weak);
+            if let Some(mut max) = scores.first() {
                 print!("\nScores for the playable columns: ");
                 for score in &scores {
                     print!(" {} ", score);
@@ -141,26 +148,26 @@ pub mod game_solver {
                 print!("\nThe best score is: {}", max);
                 self.explain_score(pos, *max);
             } else {
-                println!("No playable columns")
+                println!("No playable columns");
             }
             println!("\n");
         }
 
         fn solve(&mut self, pos: &Position) {
-            let score = self.solver.solve(&pos, self.weak, true);
+            let score = self.solver.solve(pos, self.weak, true);
             print!("\nScore is {}", score);
             self.explain_score(pos, score);
             println!();
         }
 
         fn explain_score(&mut self, pos: &Position, score: isize) {
-            if score > 0 {
-                print!(", which means '{}' can win", pos.current_player().1);
-            } else if score < 0 {
-                print!(", which means '{}' can win", pos.current_player().0,);
+            match score.cmp(&0) {
+                Ordering::Greater => print!(", which means '{}' can win", pos.current_player().1),
+                Ordering::Less => print!(", which means '{}' can win", pos.current_player().0),
+                Ordering::Equal => (),
             }
             if !self.weak {
-                print!(" in {} move(s)", Solver::score_to_moves_to_win(&pos, score),);
+                print!(" in {} move(s)", Solver::score_to_moves_to_win(pos, score),);
             }
             if score == 0 {
                 print!(", which means it's a draw");
@@ -182,12 +189,10 @@ pub mod game_solver {
     }
     fn conv_score(score: isize, weak: bool) -> isize {
         if weak {
-            if score > 0 {
-                1
-            } else if score < 0 {
-                -1
-            } else {
-                0
+            match score.cmp(&0) {
+                Ordering::Greater => 1,
+                Ordering::Less => -1,
+                Ordering::Equal => 0,
             }
         } else {
             score
@@ -215,7 +220,7 @@ pub mod game_solver {
     /// will only run the lines upto `max_lines`.
     ///
     /// The recorded times are averaged, as well as the number of nodes.
-    /// These are then printed to std_out. If the solver returns the wrong
+    /// These are then printed to `std_out`. If the solver returns the wrong
     /// score, an error message is printed, but the benchmark continues.
     pub fn bench_file(path: PathBuf, max_lines: Option<&str>, weak: bool) -> std::io::Result<()> {
         println!("\nStarting benchmark: {}", path.display());

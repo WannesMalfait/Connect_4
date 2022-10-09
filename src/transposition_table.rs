@@ -12,12 +12,10 @@ const fn has_factor(n: u64, min: u64, max: u64) -> bool {
         false
     }
     // do not search for factor above sqrt(n)
-    else {
-        if min + 1 >= max {
-            n % min == 0
-        } else {
-            has_factor(n, min, med(min, max)) || has_factor(n, med(min, max), max)
-        }
+    else if min + 1 >= max {
+        n % min == 0
+    } else {
+        has_factor(n, min, med(min, max)) || has_factor(n, med(min, max), max)
     }
 }
 
@@ -51,6 +49,13 @@ impl TranspositionTable {
     const LOG_SIZE: usize = 23;
     const SIZE: u64 = next_prime(1 << Self::LOG_SIZE);
 }
+
+impl Default for TranspositionTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TranspositionTable {
     /// Create a new `TranspositionTable` with no stored entries.
     /// ```
@@ -60,6 +65,7 @@ impl TranspositionTable {
     /// table.put(5, 2);
     /// assert_eq!(table.get(5), Some(2));
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         println!("Initialized transposition table with size: {}", Self::SIZE);
         // If no entries are in the table and we call it from the starting position
@@ -79,6 +85,7 @@ impl TranspositionTable {
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
+    #[must_use]
     pub fn get(&self, key: KeyType) -> Option<ValueType> {
         let pos = Self::index(key);
         let r_key = self.keys[pos]?;

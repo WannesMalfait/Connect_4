@@ -24,8 +24,16 @@ pub struct MoveSorter {
     size: usize,
     moves: [Inner; Position::WIDTH as usize],
 }
+
+impl Default for MoveSorter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MoveSorter {
     /// Create a new sorter.
+    #[must_use]
     pub fn new() -> Self {
         MoveSorter {
             size: 0,
@@ -40,7 +48,7 @@ impl MoveSorter {
         // Shift elements to the right until we are in the right place.
         while pos != 0 && self.moves[pos - 1].score > score {
             self.moves[pos] = self.moves[pos - 1];
-            pos = pos - 1;
+            pos -= 1;
         }
         self.moves[pos] = new;
         self.size += 1;
@@ -81,7 +89,7 @@ mod tests {
     fn correct_insertion_sort() {
         let mut ms = MoveSorter::new();
         for i in 0..Position::WIDTH {
-            ms.add(i as u64, Position::WIDTH - i + 4);
+            ms.add(u64::from(i), Position::WIDTH - i + 4);
         }
         for (i, bmove) in ms.into_iter().enumerate() {
             assert_eq!(bmove, i as position::Bitboard);

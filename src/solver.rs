@@ -11,10 +11,18 @@ pub struct Solver {
     column_order: [Column; Position::WIDTH as usize],
     trans_table: transposition_table::TranspositionTable,
 }
+
+impl Default for Solver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Solver {
     const INVALID_MOVE: isize = -1000;
 
     /// Nodes visited since last reset.
+    #[must_use]
     pub fn get_node_count(&self) -> u64 {
         self.node_count
     }
@@ -29,6 +37,7 @@ impl Solver {
 
     /// Initializes the solver with a transposition table and move
     /// ordering heuristics.
+    #[must_use]
     pub fn new() -> Self {
         let mut column_order = [0; Position::WIDTH as usize];
         // initialize the column exploration order, starting with center columns
@@ -124,7 +133,7 @@ impl Solver {
             }
         }
         for bmove in moves {
-            let mut pos2 = Position::from(*pos);
+            let mut pos2 = *pos;
             pos2.play(bmove);
             let score = -self.negamax(&pos2, -beta, -alpha);
             if score >= beta {
@@ -208,7 +217,7 @@ impl Solver {
                 if pos.is_winning_move(col) {
                     scores[col as usize] = Self::num_stones_left(1, pos);
                 } else {
-                    let mut pos2 = Position::from(*pos);
+                    let mut pos2 = *pos;
                     pos2.play_col(col);
                     scores[col as usize] = -self.solve(&pos2, weak, true);
                 }
@@ -218,6 +227,7 @@ impl Solver {
     }
     /// Convert a score to the number of moves till the winning player can win.
     /// Should not be called with score 0, which is a draw
+    #[must_use]
     pub fn score_to_moves_to_win(pos: &Position, score: isize) -> isize {
         if score > 0 {
             Self::num_stones_left(1, pos) - score + 1
