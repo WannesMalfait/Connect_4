@@ -1,3 +1,9 @@
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+    path::Path,
+};
+
 use crate::position;
 
 /// The following are functions to dind the next prime factor at compile time
@@ -65,7 +71,6 @@ impl TranspositionTable {
     /// table.put(5, 2);
     /// assert_eq!(table.get(5), Some(2));
     /// ```
-    #[must_use]
     pub fn new() -> Self {
         println!("Initialized transposition table with size: {}", Self::SIZE);
         // If no entries are in the table and we call it from the starting position
@@ -85,7 +90,7 @@ impl TranspositionTable {
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
-    #[must_use]
+    // #[must_use]
     pub fn get(&self, key: KeyType) -> Option<ValueType> {
         let pos = Self::index(key);
         let r_key = self.keys[pos]?;
@@ -115,6 +120,18 @@ struct BookEntry {
     bmove: position::Bitboard,
     /// The best possible score in the position
     score: isize,
+}
+
+// enum ParseBookEntryError {
+//     Pos,
+//     Bmove,
+//     Score,
+// }
+
+impl BookEntry {
+    pub fn from_string(str: &str) -> Result<Self, std::io::Error> {
+        todo!()
+    }
 }
 
 /// An `OpeningBook` is a way to store the best moves in common positions
@@ -205,8 +222,19 @@ impl OpeningBook {
 
     /// Load an opening book from a file. If errors occured while
     /// loading or parsing the file an `Err` is returned.
-    pub fn load_book(path: String) -> std::io::Result<Self> {
-        todo!("Read file in path: {} and store keys and values", path);
+    pub fn load_book(path: &Path) -> std::io::Result<Self> {
+        todo!()
+    }
+
+    pub fn store_book(path: &Path) -> std::io::Result<()> {
+        let file = File::open(path)?;
+        let file = BufReader::new(file);
+        for line in file.lines() {
+            let line = line?;
+            let entry = BookEntry::from_string(&line)?;
+            continue;
+        }
+        Ok(())
     }
 
     /// Get the associated value of the given `key`. If no entry was found
