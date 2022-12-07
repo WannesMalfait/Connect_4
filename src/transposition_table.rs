@@ -1,6 +1,7 @@
 use std::{
+    error::Error,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, BufWriter, Write},
     path::Path,
 };
 
@@ -121,16 +122,60 @@ struct BookEntry {
     /// The best possible score in the position
     score: isize,
 }
+#[derive(Debug)]
+enum ParseBookEntryError {
+    /// The number of values in the string is not 3
+    NumValues,
+    /// The position key stored was not valid
+    Pos,
+    /// The best move bitboard was not valid
+    Bmove,
+    /// The score stored was not valid
+    Score,
+}
 
-// enum ParseBookEntryError {
-//     Pos,
-//     Bmove,
-//     Score,
-// }
+impl std::fmt::Display for ParseBookEntryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NumValues => write!(f, "Expected 3 values in the entry"),
+            Self::Pos => write!(f, "Could not parse first value into a valid position"),
+            Self::Bmove => write!(f, "Could not parse second value into a valid bitboard move"),
+            Self::Score => write!(f, "Could not parse third value into a valid score"),
+        }
+    }
+}
+
+impl Error for ParseBookEntryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
+impl From<ParseBookEntryError> for std::io::Error {
+    fn from(err: ParseBookEntryError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, err)
+    }
+}
 
 impl BookEntry {
-    pub fn from_string(str: &str) -> Result<Self, std::io::Error> {
-        todo!()
+    pub fn from_string(str: &str) -> Result<Self, ParseBookEntryError> {
+        let v: Vec<&str> = str.split(' ').collect();
+        if v.len() != 3 {
+            return Err(ParseBookEntryError::NumValues);
+        }
+        let pos = match v[0].parse::<KeyType>() {
+            Ok(p) => p,
+            Err(_) => return Err(ParseBookEntryError::Pos),
+        };
+        let bmove = match v[0].parse::<position::Bitboard>() {
+            Ok(m) => m,
+            Err(_) => return Err(ParseBookEntryError::Bmove),
+        };
+        let score = match v[0].parse::<isize>() {
+            Ok(s) => s,
+            Err(_) => return Err(ParseBookEntryError::Score),
+        };
+        Ok(Self { pos, bmove, score })
     }
 }
 
@@ -222,18 +267,26 @@ impl OpeningBook {
 
     /// Load an opening book from a file. If errors occured while
     /// loading or parsing the file an `Err` is returned.
-    pub fn load_book(path: &Path) -> std::io::Result<Self> {
-        todo!()
-    }
-
-    pub fn store_book(path: &Path) -> std::io::Result<()> {
+    pub fn load(path: &Path) -> Result<Self, std::io::Error> {
         let file = File::open(path)?;
         let file = BufReader::new(file);
+        let mut entries = Vec::new();
         for line in file.lines() {
             let line = line?;
             let entry = BookEntry::from_string(&line)?;
-            continue;
+            entries.push(entry);
         }
+        Ok(Self::from(entries))
+    }
+
+    pub fn store(&self, path: &Path) -> Result<(), std::io::Error> {
+        let file = File::options().write(true).create(true).open(path)?;
+        file.set_len(0)?;
+        let mut file = BufWriter::new(file);
+        for entry in &self.entries {
+            writeln!(&mut file, "{} {} {}", entry.pos, entry.bmove, entry.score)?;
+        }
+        file.flush()?;
         Ok(())
     }
 
@@ -376,6 +429,40 @@ mod tests {
         let mut moves = book.book_moves_from_position(pos);
         assert_eq!(moves.next(), Some(0));
         assert_eq!(moves.next(), Some(2));
+        assert_eq!(moves.next(), None);
+    }
+
+    #[test]
+    fn store_load_book() {
+        let mut pos = position::Position::new();
+        let mut book = OpeningBook::new();
+        book.put_pos(&pos, 0u64, 0);
+        let mut moves = book.book_moves_from_position(pos.clone());
+        // No book moves in starting position.
+        assert_eq!(moves.next(), None);
+        // Add 2 moves in the book.
+        pos.play_col(0);
+        book.put_pos(&pos, 0u64, 0);
+        pos = position::Position::new();
+        pos.play_col(2);
+        book.put_pos(&pos, 0u64, 0);
+        pos = position::Position::new();
+        pos.play_col(3);
+        book.put_pos(&pos, 0u64, 0);
+
+        let book_path = std::path::Path::new("test_book.book");
+        book.store(book_path).unwrap();
+        let book = OpeningBook::load(book_path).unwrap();
+
+        // Get rid of the test book again.
+        std::fs::remove_file(book_path).unwrap();
+
+        pos = position::Position::new();
+        // Look at moves from the starting position
+        let mut moves = book.book_moves_from_position(pos);
+        assert_eq!(moves.next(), Some(0));
+        assert_eq!(moves.next(), Some(2));
+        assert_eq!(moves.next(), Some(3));
         assert_eq!(moves.next(), None);
     }
 }
