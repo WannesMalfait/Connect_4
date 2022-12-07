@@ -4,11 +4,10 @@ Ported to rust from [this](https://github.com/PascalPons/connect4)
 
 ## Basic usage
 
-You can get a list of commands using:
+You can get information about the program using
 ```
-> commands
+> help
 ```
-or `help`. 
 
 To set up a position you can use `position` which will play the given moves from the starting position:
 ```
@@ -56,7 +55,7 @@ Took 6.1940141s
 
 ### Benchmark
 
-To test the performance of the solver you can run a benchmark on one of the testfiles. The bench is run using the strong or weak solver depending on the current setting. You can toggle it using `toggle-weak`:
+To test the performance of the solver you can run a benchmark on one of the test files. The bench is run using the strong or weak solver depending on the current setting. The weak solver only calculates whether the position is a win, draw or loss, which makes it faster. You can toggle it using `toggle-weak`:
 ```
 > toggle-weak
 Weak set to true
@@ -66,10 +65,12 @@ Weak set to false
 
 > bench ./benchmark_files/begin_easy
 ```
-You can specify the maximum number of lines to solve if you want a faster result. You can also run the benchmarks for all the files.
+You can specify the maximum number of lines to solve if you want a faster result. Use "all" instead of a file path to run all the benchmarks. This searches for benchmarks in `./benchmark_files/`.
 ```
 bench all 100
 ```
 
 ## Plans
-I have plans to add an option for opening books in the future. If you have your own ideas that you want to add, feel free to add a pull request or create an issue.
+- Opening book support is being worked on in the `book` branch.
+- Adding some form of multi-threading is planned (probably something like [lazy SMP](https://www.chessprogramming.org/Lazy_SMP)). 
+- If you have your own ideas that you want to add, feel free to make a pull request or create an issue.
