@@ -7,7 +7,7 @@ use std::{
 
 use crate::position;
 
-/// The following are functions to dind the next prime factor at compile time
+/// The following are functions to find the next prime factor at compile time
 
 const fn med(min: u64, max: u64) -> u64 {
     (min + max) / 2
