@@ -38,7 +38,7 @@ pub mod game_solver {
         ToggleWeak,
         Help(Option<Box<Command>>),
         ClearTT,
-        Bench(Option<String>, Option<usize>),
+        Bench(Option<PathBuf>, Option<usize>),
         LoadBook(PathBuf),
         Quit,
     }
@@ -121,7 +121,7 @@ pub mod game_solver {
                         if path == "all" {
                             Some(Command::Bench(None, max_lines))
                         } else if std::path::Path::new(path).exists() {
-                            Some(Command::Bench(Some(path.to_string()), max_lines))
+                            Some(Command::Bench(Some(PathBuf::from(path)), max_lines))
                         } else {
                             eprintln!("Invalid path {path}");
                             None
@@ -346,12 +346,12 @@ pub mod game_solver {
         }
 
         fn handle_bench(
-            path: Option<String>,
+            path: Option<PathBuf>,
             max_lines: Option<usize>,
             weak: bool,
         ) -> std::io::Result<()> {
             if let Some(path) = path {
-                bench_file(PathBuf::from(path), max_lines, weak)?;
+                bench_file(path, max_lines, weak)?;
             } else {
                 let paths = fs::read_dir("./benchmark_files")?;
                 for dir in paths {
