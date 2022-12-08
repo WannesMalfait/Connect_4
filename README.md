@@ -70,7 +70,18 @@ You can specify the maximum number of lines to solve if you want a faster result
 bench all 100
 ```
 
+### Opening Books
+
+In the starting position, it can take a long time to find the best move. For this reason an opening book can be loaded, which knows the best moves in starting positions. An opening book is a file where each line is an entry with three values.
+```
+position_key best_move score
+```
+
+By default, the program looks for a book `./opening_book.book`, but a custom path can be specified:
+```
+> load-book ./my_awesome_openings.book
+```
+
 ## Plans
-- Opening book support is being worked on in the `book` branch.
 - Adding some form of multi-threading is planned (probably something like [lazy SMP](https://www.chessprogramming.org/Lazy_SMP)). 
 - If you have your own ideas that you want to add, feel free to make a pull request or create an issue.
