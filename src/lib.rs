@@ -23,6 +23,7 @@ pub mod game_solver {
 
     use crate::position::{self, Position};
     use crate::solver::Solver;
+    use crate::transposition_table;
 
     pub struct Parser {
         solver: Solver,
@@ -38,6 +39,7 @@ pub mod game_solver {
         Help(Option<Box<Command>>),
         ClearTT,
         Bench(Option<String>, Option<usize>),
+        LoadBook(PathBuf),
         Quit,
     }
 
@@ -45,7 +47,7 @@ pub mod game_solver {
         #[must_use]
         pub fn new(weak: bool) -> Self {
             Self {
-                solver: Solver::new(),
+                solver: Solver::new(None),
                 weak,
             }
         }
@@ -126,6 +128,33 @@ pub mod game_solver {
                         }
                     }
                 },
+                "load-book" => {
+                    if !recurse {
+                        return Some(Command::LoadBook(PathBuf::from("")));
+                    }
+                    match args.next() {
+                        None => {
+                            let path = std::path::Path::new("./opening_book.book");
+                            if path.exists() {
+                                Some(Command::LoadBook(path.to_path_buf()))
+                            } else {
+                                eprintln!(
+                                    "No opening book found in default path, please provide a path."
+                                );
+                                None
+                            }
+                        }
+                        Some(p) => {
+                            let path = std::path::Path::new(p);
+                            if path.exists() {
+                                Some(Command::LoadBook(path.to_path_buf()))
+                            } else {
+                                eprintln!("Invalid path to book: {p}");
+                                None
+                            }
+                        }
+                    }
+                }
                 "quit" => Some(Command::Quit),
                 _ => {
                     eprintln!("Don't know the command: {}", first);
@@ -220,6 +249,11 @@ pub mod game_solver {
                                         );
                                         println!("A number max_lines can be specified to only solve at most that many positions per file.");
                                     }
+                                    Command::LoadBook(_) => {
+                                        println!("load-book [path]");
+                                        println!("Load opening book from file.");
+                                        println!("If path is not given the default path './opening_book.book' is used.");
+                                    }
                                     Command::Quit => {
                                         println!("Quit the program.");
                                     }
@@ -236,6 +270,7 @@ pub mod game_solver {
                                         "help",
                                         "clear-tt",
                                         "bench",
+                                        "load-book",
                                         "quit",
                                     ]
                                 );
@@ -250,7 +285,13 @@ pub mod game_solver {
                         }
                         Command::Bench(path, max_lines) => {
                             if let Err(e) = Self::handle_bench(path, max_lines, self.weak) {
-                                eprintln!("Error while running bench {e}");
+                                eprintln!("Error while running bench: '{e}'");
+                            }
+                        }
+                        Command::LoadBook(path) => {
+                            match transposition_table::OpeningBook::load(&path) {
+                                Ok(book) => self.solver.set_book(book),
+                                Err(e) => eprintln!("Error while loading book: '{e}'"),
                             }
                         }
                         Command::Quit => {
@@ -360,7 +401,7 @@ pub mod game_solver {
         let file = File::open(path)?;
         let file = BufReader::new(file);
         let max_lines = max_lines.unwrap_or_default();
-        let mut solver = Solver::new();
+        let mut solver = Solver::new(None);
         let mut times = Vec::with_capacity(max_lines);
         let mut nodes = Vec::with_capacity(max_lines);
         for (i, line) in file.lines().enumerate() {
