@@ -55,7 +55,7 @@ pub type Column = u8;
 ///
 /// A binary bitboard representation is used.
 /// Each column is encoded on `HEIGHT+1` bits.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Position {
     /// bitboard of the current_player stones
     current_position: Bitboard,

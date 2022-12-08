@@ -3,6 +3,7 @@ use std::time::Instant;
 use crate::move_sorter;
 use crate::position;
 use crate::transposition_table;
+use crate::transposition_table::OpeningBook;
 use move_sorter::MoveSorter;
 use position::{Column, Position};
 
@@ -10,11 +11,12 @@ pub struct Solver {
     node_count: u64,
     column_order: [Column; Position::WIDTH as usize],
     trans_table: transposition_table::TranspositionTable,
+    book: Option<transposition_table::OpeningBook>,
 }
 
 impl Default for Solver {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -35,10 +37,14 @@ impl Solver {
         self.trans_table.reset();
     }
 
+    pub fn set_book(&mut self, book: OpeningBook) {
+        self.book = Some(book)
+    }
+
     /// Initializes the solver with a transposition table and move
     /// ordering heuristics.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(book: Option<OpeningBook>) -> Self {
         let mut column_order = [0; Position::WIDTH as usize];
         // initialize the column exploration order, starting with center columns
         for i in 0..Position::WIDTH {
@@ -51,6 +57,7 @@ impl Solver {
             node_count: 0,
             column_order,
             trans_table: transposition_table::TranspositionTable::new(),
+            book,
         }
     }
 
@@ -133,7 +140,7 @@ impl Solver {
             }
         }
         for bmove in moves {
-            let mut pos2 = *pos;
+            let mut pos2 = pos.clone();
             pos2.play(bmove);
             let score = -self.negamax(&pos2, -beta, -alpha);
             if score >= beta {
@@ -170,6 +177,17 @@ impl Solver {
         if pos.can_win_next() {
             return Self::num_stones_left(1, pos);
         }
+
+        // Check if the position is in the opening book.
+        if let Some(book) = &self.book {
+            if let Some((_, score)) = book.get(pos.key()) {
+                if output {
+                    println!("Position in opening book");
+                }
+                return score;
+            }
+        }
+
         let mut min = -Self::num_stones_left(0, pos);
         let mut max = Self::num_stones_left(1, pos);
         if weak {
@@ -217,7 +235,7 @@ impl Solver {
                 if pos.is_winning_move(col) {
                     scores[col as usize] = Self::num_stones_left(1, pos);
                 } else {
-                    let mut pos2 = *pos;
+                    let mut pos2 = pos.clone();
                     pos2.play_col(col);
                     scores[col as usize] = -self.solve(&pos2, weak, true);
                 }
@@ -225,6 +243,7 @@ impl Solver {
         }
         scores
     }
+
     /// Convert a score to the number of moves till the winning player can win.
     /// Should not be called with score 0, which is a draw
     #[must_use]
@@ -242,7 +261,7 @@ pub mod tests {
     use super::*;
     #[test]
     fn column_order() {
-        let s = Solver::new();
+        let s = Solver::new(None);
         if Position::WIDTH == 7 {
             assert_eq!(s.column_order, [3, 2, 4, 1, 5, 0, 6]);
         }
