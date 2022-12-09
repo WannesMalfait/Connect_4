@@ -48,7 +48,7 @@ type ValueType = position::Column;
 /// The number of stored entries is a power of two that is defined at compile time.
 /// We also define size of the entries and keys to allow optimization at compile time.
 pub struct TranspositionTable {
-    keys: Vec<Option<PartialKeyType>>,
+    keys: Vec<PartialKeyType>,
     values: Vec<ValueType>,
 }
 impl TranspositionTable {
@@ -78,23 +78,23 @@ impl TranspositionTable {
         // then the key is zero, which would make it seem like there is a value stored
         // there even though there isn't.
         Self {
-            keys: vec![None; Self::SIZE as usize],
+            keys: vec![0; Self::SIZE as usize],
             values: vec![0; Self::SIZE as usize],
         }
     }
     /// Get rid of all stored entries.
     pub fn reset(&mut self) {
         for i in 0..Self::SIZE {
-            self.keys[i as usize] = None;
+            self.keys[i as usize] = 0;
             self.values[i as usize] = 0;
         }
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
-    // #[must_use]
+    #[must_use]
     pub fn get(&self, key: KeyType) -> Option<ValueType> {
         let pos = Self::index(key);
-        let r_key = self.keys[pos]?;
+        let r_key = self.keys[pos];
         if r_key == key as PartialKeyType {
             Some(self.values[pos])
         } else {
@@ -104,7 +104,7 @@ impl TranspositionTable {
     /// Store a key value pair in the table. Previous entries are overwritten on collision.
     pub fn put(&mut self, key: KeyType, value: ValueType) {
         let pos = Self::index(key);
-        self.keys[pos] = Some(key as PartialKeyType); // key is possibly truncated as key_t is possibly less than key_size bits.
+        self.keys[pos] = key as PartialKeyType; // key is possibly truncated as key_t is possibly less than key_size bits.
         self.values[pos] = value;
     }
     /// Get the index for the given `key`.
