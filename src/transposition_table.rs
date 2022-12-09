@@ -53,7 +53,7 @@ pub struct TranspositionTable {
 }
 impl TranspositionTable {
     /// Base 2 log of the size of the Transposition Table.
-    const LOG_SIZE: usize = 23;
+    const LOG_SIZE: usize = 24;
     const SIZE: u64 = next_prime(1 << Self::LOG_SIZE);
 }
 
@@ -94,11 +94,14 @@ impl TranspositionTable {
     #[must_use]
     pub fn get(&self, key: KeyType) -> Option<ValueType> {
         let pos = Self::index(key);
-        let r_key = self.keys[pos];
-        if r_key == key as PartialKeyType {
-            Some(self.values[pos])
-        } else {
-            None
+        // SAFETY: the index returned by `Self::index` is guaranteed to be valid.
+        unsafe {
+            let r_key = *self.keys.get_unchecked(pos);
+            if r_key == key as PartialKeyType {
+                Some(*self.values.get_unchecked(pos))
+            } else {
+                None
+            }
         }
     }
     /// Store a key value pair in the table. Previous entries are overwritten on collision.

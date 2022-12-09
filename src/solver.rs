@@ -9,6 +9,7 @@ use position::{Column, Position};
 
 pub struct Solver {
     node_count: u64,
+    tt_hits: u64,
     column_order: [Column; Position::WIDTH as usize],
     trans_table: transposition_table::TranspositionTable,
     book: Option<transposition_table::OpeningBook>,
@@ -27,6 +28,11 @@ impl Solver {
     #[must_use]
     pub fn get_node_count(&self) -> u64 {
         self.node_count
+    }
+    /// Transposition table hits since last reset.
+    #[must_use]
+    pub fn get_tt_hits(&self) -> u64 {
+        self.tt_hits
     }
     /// Reset the counter to 0.
     pub fn reset_node_count(&mut self) {
@@ -55,6 +61,7 @@ impl Solver {
         }
         Solver {
             node_count: 0,
+            tt_hits: 0,
             column_order,
             trans_table: transposition_table::TranspositionTable::new(),
             book,
@@ -65,6 +72,35 @@ impl Solver {
     #[inline]
     fn num_stones_left(addend: isize, pos: &Position) -> isize {
         ((Position::WIDTH * Position::HEIGHT) as isize + addend - pos.nb_moves() as isize) / 2
+    }
+
+    /// Try and look up the position in the transposition table. If it's in the tt and
+    /// the value allows us to prune, `Some(score)` is returned.
+    #[must_use]
+    fn trans_table_success(&self, key: u64, alpha: &mut isize, beta: &mut isize) -> Option<isize> {
+        let val = self.trans_table.get(key)?;
+        // The node has been visited before
+        let val = val as isize;
+        if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
+            // Lower bound was stored
+            let min = val + 2 * Position::MIN_SCORE - Position::MAX_SCORE - 2;
+            if *alpha < min {
+                *alpha = min;
+                if alpha >= beta {
+                    return Some(*alpha);
+                }
+            }
+        } else {
+            // Upper bound was stored
+            let max = val + Position::MIN_SCORE - 1;
+            if *beta > max {
+                *beta = max;
+                if alpha >= beta {
+                    return Some(*beta);
+                }
+            }
+        }
+        None
     }
 
     /// Main alpha-beta search function.
@@ -84,7 +120,7 @@ impl Solver {
             return 0;
         }
         // This is a lower bound on the score because they can't win next move
-        let mut min = -Self::num_stones_left(-2, pos);
+        let min = -Self::num_stones_left(-2, pos);
         if alpha < min {
             // We are searching in [alpha;beta] window but min > alpha, so we can instead search in [min; beta] window
             alpha = min;
@@ -94,7 +130,7 @@ impl Solver {
             }
         }
         // Upper bound on the score because we can't win next move
-        let mut max = Self::num_stones_left(-1, pos);
+        let max = Self::num_stones_left(-1, pos);
         if beta > max {
             // We are searching in [alpha;beta] window but beta > max, so we can instead search in [alpha; max] window
             beta = max;
@@ -105,28 +141,9 @@ impl Solver {
         }
 
         let key = pos.key();
-        if let Some(val) = self.trans_table.get(key) {
-            // The node has been visited before
-            let val = val as isize;
-            if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
-                // Lower bound was stored
-                min = val + 2 * Position::MIN_SCORE - Position::MAX_SCORE - 2;
-                if alpha < min {
-                    alpha = min;
-                    if alpha >= beta {
-                        return alpha;
-                    }
-                }
-            } else {
-                // Upper bound was stored
-                max = val + Position::MIN_SCORE - 1;
-                if beta > max {
-                    beta = max;
-                    if alpha >= beta {
-                        return beta;
-                    }
-                }
-            }
+        if let Some(score) = self.trans_table_success(key, &mut alpha, &mut beta) {
+            self.tt_hits += 1;
+            return score;
         }
 
         let mut moves = MoveSorter::new();
@@ -198,6 +215,7 @@ impl Solver {
         while min < max {
             let now = Instant::now();
             let nodes = self.get_node_count();
+            let tt_hits = self.get_tt_hits();
             // iteratively narrow the min-max exploration window
             let mut med = min + (max - min) / 2;
             if med <= 0 && min / 2 < med {
@@ -217,10 +235,11 @@ impl Solver {
             }
             if output {
                 println!(
-                    "took: {:?} with {} nodes, kn/s: {:.1}",
+                    "took: {:?} with {} nodes, kn/s: {:.1}, {} tt hits",
                     now.elapsed(),
                     self.get_node_count() - nodes,
                     (self.get_node_count() - nodes) as f64 / now.elapsed().as_secs_f64() / 1000.0,
+                    self.get_tt_hits() - tt_hits,
                 );
             }
         }
