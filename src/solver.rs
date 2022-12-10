@@ -1,9 +1,9 @@
 use std::time::Instant;
 
 use crate::move_sorter;
+use crate::opening_book::OpeningBook;
 use crate::position;
 use crate::transposition_table;
-use crate::transposition_table::OpeningBook;
 use move_sorter::MoveSorter;
 use position::{Column, Position};
 
@@ -12,7 +12,7 @@ pub struct Solver {
     tt_hits: u64,
     column_order: [Column; Position::WIDTH as usize],
     trans_table: transposition_table::TranspositionTable,
-    book: Option<transposition_table::OpeningBook>,
+    book: Option<OpeningBook>,
 }
 
 impl Default for Solver {

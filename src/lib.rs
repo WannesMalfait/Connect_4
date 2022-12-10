@@ -5,6 +5,7 @@
     clippy::cast_precision_loss
 )]
 pub mod move_sorter;
+pub mod opening_book;
 pub mod position;
 pub mod solver;
 pub mod transposition_table;
@@ -21,9 +22,9 @@ pub mod game_solver {
 
     use std::time::Instant;
 
+    use crate::opening_book::OpeningBook;
     use crate::position::{self, Position};
     use crate::solver::Solver;
-    use crate::transposition_table;
 
     pub struct Parser {
         solver: Solver,
@@ -288,12 +289,10 @@ pub mod game_solver {
                                 eprintln!("Error while running bench: '{e}'");
                             }
                         }
-                        Command::LoadBook(path) => {
-                            match transposition_table::OpeningBook::load(&path) {
-                                Ok(book) => self.solver.set_book(book),
-                                Err(e) => eprintln!("Error while loading book: '{e}'"),
-                            }
-                        }
+                        Command::LoadBook(path) => match OpeningBook::load(&path) {
+                            Ok(book) => self.solver.set_book(book),
+                            Err(e) => eprintln!("Error while loading book: '{e}'"),
+                        },
                         Command::Quit => {
                             break;
                         }
