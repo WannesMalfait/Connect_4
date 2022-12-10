@@ -1,4 +1,4 @@
-use crate::position::{Bitboard, Column, Position};
+use crate::position::{Column, Position};
 use std::{
     error::Error,
     fs::File,
@@ -10,8 +10,6 @@ use std::{
 struct BookEntry {
     /// The key of the position
     pos: u64,
-    /// A move with the best possible score
-    bmove: Bitboard,
     /// The best possible score in the position
     score: isize,
 }
@@ -21,8 +19,6 @@ enum ParseBookEntryError {
     NumValues,
     /// The position key stored was not valid
     Pos,
-    /// The best move bitboard was not valid
-    Bmove,
     /// The score stored was not valid
     Score,
 }
@@ -30,9 +26,8 @@ enum ParseBookEntryError {
 impl std::fmt::Display for ParseBookEntryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NumValues => write!(f, "Expected 3 values in the entry"),
+            Self::NumValues => write!(f, "Expected 2 values in the entry"),
             Self::Pos => write!(f, "Could not parse first value into a valid position"),
-            Self::Bmove => write!(f, "Could not parse second value into a valid bitboard move"),
             Self::Score => write!(f, "Could not parse third value into a valid score"),
         }
     }
@@ -53,22 +48,18 @@ impl From<ParseBookEntryError> for std::io::Error {
 impl BookEntry {
     pub fn from_string(str: &str) -> Result<Self, ParseBookEntryError> {
         let v: Vec<&str> = str.split(' ').collect();
-        if v.len() != 3 {
+        if v.len() != 2 {
             return Err(ParseBookEntryError::NumValues);
         }
         let pos = match v[0].parse::<u64>() {
             Ok(p) => p,
             Err(_) => return Err(ParseBookEntryError::Pos),
         };
-        let bmove = match v[0].parse::<Bitboard>() {
-            Ok(m) => m,
-            Err(_) => return Err(ParseBookEntryError::Bmove),
-        };
-        let score = match v[0].parse::<isize>() {
+        let score = match v[1].parse::<isize>() {
             Ok(s) => s,
             Err(_) => return Err(ParseBookEntryError::Score),
         };
-        Ok(Self { pos, bmove, score })
+        Ok(Self { pos, score })
     }
 }
 
@@ -136,6 +127,11 @@ impl OpeningBook {
         }
     }
 
+    #[must_use]
+    pub fn num_entries(&self) -> usize {
+        self.entries.len()
+    }
+
     fn is_valid(&self) -> bool {
         // `is_sorted()` is unstable, so create our own version.
         let mut prev = match self.entries.first() {
@@ -176,28 +172,28 @@ impl OpeningBook {
         file.set_len(0)?;
         let mut file = BufWriter::new(file);
         for entry in &self.entries {
-            writeln!(&mut file, "{} {} {}", entry.pos, entry.bmove, entry.score)?;
+            writeln!(&mut file, "{} {}", entry.pos, entry.score)?;
         }
         file.flush()?;
         Ok(())
     }
 
     /// Get the associated value of the given position. If no entry was found
-    /// it returns `None`, otherwise it returns `Some(bmove, score)`.
+    /// it returns `None`, otherwise it returns `Some(score)`.
     #[must_use]
-    pub fn get(&self, pos: &Position) -> Option<(Bitboard, isize)> {
+    pub fn get(&self, pos: &Position) -> Option<isize> {
         self.get_by_key(pos.key3())
     }
 
     /// Get the associated value of the given `key`. If no entry was found
-    /// it returns `None`, otherwise it returns `Some(bmove, score)`.
+    /// it returns `None`, otherwise it returns `Some(score)`.
     ///
     /// WARNING: the key should be the symmetric base 3 key of the position.
     #[must_use]
-    fn get_by_key(&self, key: u64) -> Option<(Bitboard, isize)> {
+    fn get_by_key(&self, key: u64) -> Option<isize> {
         if let Ok(pos) = self.entries.binary_search_by_key(&key, |entry| entry.pos) {
             let entry = self.entries[pos];
-            Some((entry.bmove, entry.score))
+            Some(entry.score)
         } else {
             None
         }
@@ -207,12 +203,8 @@ impl OpeningBook {
     /// If the position is already in the book, it is overwritten.
     ///
     /// WARNING: the key should be the symmetric base 3 key of the position.
-    fn put_by_key(&mut self, key: u64, bmove: Bitboard, score: isize) {
-        let entry = BookEntry {
-            pos: key,
-            bmove,
-            score,
-        };
+    fn put_by_key(&mut self, key: u64, score: isize) {
+        let entry = BookEntry { pos: key, score };
         match self.entries.binary_search_by_key(&key, |entry| entry.pos) {
             Ok(index) => {
                 // We already have an entry, so just overwrite it.
@@ -225,8 +217,8 @@ impl OpeningBook {
     /// Insert an entry in the book for the given position.
     /// If the position is already in the book, it is overwritten.
     #[inline]
-    pub fn put(&mut self, pos: &Position, bmove: Bitboard, score: isize) {
-        self.put_by_key(pos.key3(), bmove, score);
+    pub fn put(&mut self, pos: &Position, score: isize) {
+        self.put_by_key(pos.key3(), score);
     }
 
     /// Get the playable moves from this position that are in the book.
@@ -259,8 +251,8 @@ mod tests {
                 let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
                 let score = pos.move_score(bmove) as Column;
                 // Just for testing we put in dummy score and best move.
-                book.put(&pos, bmove, score.into());
-                assert_eq!(book.get(&pos), Some((bmove, isize::from(score))));
+                book.put(&pos, score.into());
+                assert_eq!(book.get(&pos), Some(isize::from(score)));
             }
         }
         assert!(book.is_valid());
@@ -279,7 +271,6 @@ mod tests {
                 // Just for testing we put in dummy score and best move.
                 entries.push(BookEntry {
                     pos: pos.key3(),
-                    bmove,
                     score: score.into(),
                 });
             }
@@ -292,16 +283,16 @@ mod tests {
     fn book_moves() {
         let mut pos = Position::new();
         let mut book = OpeningBook::new();
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         let mut moves = book.book_moves_from_position(pos.clone());
         // No book moves in starting position.
         assert_eq!(moves.next(), None);
         // Add 2 moves in the book.
         pos.play_col(0);
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         pos = Position::new();
         pos.play_col(2);
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         pos = Position::new();
         // Look at moves from the starting position
         let mut moves = book.book_moves_from_position(pos);
@@ -317,7 +308,7 @@ mod tests {
     fn store_load_book() {
         let mut pos = Position::new();
         let mut book = OpeningBook::new();
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         let mut moves = book.book_moves_from_position(pos.clone());
         // No book moves in starting position.
         assert_eq!(moves.next(), None);
@@ -325,17 +316,17 @@ mod tests {
         pos.play_col(0);
         println!("Played col 0");
         pos.display_position();
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         pos = Position::new();
         pos.play_col(2);
         println!("Played col 2");
         pos.display_position();
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
         pos = Position::new();
         pos.play_col(3);
         println!("Played col 3");
         pos.display_position();
-        book.put(&pos, 0u64, 0);
+        book.put(&pos, 0);
 
         let book_path = std::path::Path::new("test_book.book");
         book.store(book_path).unwrap();

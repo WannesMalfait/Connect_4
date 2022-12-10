@@ -82,6 +82,11 @@ By default, the program looks for a book `./opening_book.book`, but a custom pat
 > load-book ./my_awesome_openings.book
 ```
 
+The `generate-book` command can be used to generate a book from the current position to a given depth (this can take a long time!):
+```
+> generate-book 3
+```
+
 ## Plans
 - Adding some form of multi-threading is planned (probably something like [lazy SMP](https://www.chessprogramming.org/Lazy_SMP)). 
 - If you have your own ideas that you want to add, feel free to make a pull request or create an issue.

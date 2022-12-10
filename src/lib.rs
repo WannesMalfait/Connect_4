@@ -31,6 +31,8 @@ pub mod game_solver {
         weak: bool,
     }
 
+    const DEFAULT_BOOK_PATH: &str = "./opening_book.book";
+
     enum Command {
         PlayMoves(Vec<position::Column>),
         SetPosition(Vec<position::Column>),
@@ -41,6 +43,7 @@ pub mod game_solver {
         ClearTT,
         Bench(Option<PathBuf>, Option<usize>),
         LoadBook(PathBuf),
+        GenerateBook(usize, PathBuf),
         Quit,
     }
 
@@ -135,7 +138,7 @@ pub mod game_solver {
                     }
                     match args.next() {
                         None => {
-                            let path = std::path::Path::new("./opening_book.book");
+                            let path = std::path::Path::new(DEFAULT_BOOK_PATH);
                             if path.exists() {
                                 Some(Command::LoadBook(path.to_path_buf()))
                             } else {
@@ -155,6 +158,27 @@ pub mod game_solver {
                             }
                         }
                     }
+                }
+                "generate-book" => {
+                    if !recurse {
+                        return Some(Command::GenerateBook(0, PathBuf::from("")));
+                    }
+                    let depth = match args.next() {
+                        None => return None,
+                        Some(num) => match num.parse::<usize>() {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Expected maximal depth for opening book ({e})");
+                                return None;
+                            }
+                        },
+                    };
+                    let path = match args.next() {
+                        None => std::path::Path::new(DEFAULT_BOOK_PATH),
+
+                        Some(p) => std::path::Path::new(p),
+                    };
+                    Some(Command::GenerateBook(depth, path.to_path_buf()))
                 }
                 "quit" => Some(Command::Quit),
                 _ => {
@@ -253,7 +277,12 @@ pub mod game_solver {
                                     Command::LoadBook(_) => {
                                         println!("load-book [path]");
                                         println!("Load opening book from file.");
-                                        println!("If path is not given the default path './opening_book.book' is used.");
+                                        println!("If path is not given the default path '{DEFAULT_BOOK_PATH}' is used.");
+                                    }
+                                    Command::GenerateBook(_, _) => {
+                                        println!("generate-book <depth> [path]");
+                                        println!("Generate an opening book to the given depth from the current position.");
+                                        println!("By default the book is stored in '{DEFAULT_BOOK_PATH}', but another path can be specified.")
                                     }
                                     Command::Quit => {
                                         println!("Quit the program.");
@@ -272,6 +301,7 @@ pub mod game_solver {
                                         "clear-tt",
                                         "bench",
                                         "load-book",
+                                        "generate-book",
                                         "quit",
                                     ]
                                 );
@@ -290,9 +320,28 @@ pub mod game_solver {
                             }
                         }
                         Command::LoadBook(path) => match OpeningBook::load(&path) {
-                            Ok(book) => self.solver.set_book(book),
+                            Ok(book) => {
+                                println!(
+                                    "Loaded book in {:?} ({} entries)",
+                                    path,
+                                    book.num_entries()
+                                );
+                                self.solver.set_book(book)
+                            }
                             Err(e) => eprintln!("Error while loading book: '{e}'"),
                         },
+                        Command::GenerateBook(depth, path) => {
+                            self.solver.generate_book(&pos, depth);
+                            if let Err(e) = self.solver.get_book().store(&path) {
+                                eprintln!("Err while storing book: '{e}'");
+                            } else {
+                                println!(
+                                    "Stored book in {:?} ({} entries)",
+                                    path,
+                                    self.solver.get_book().num_entries()
+                                );
+                            }
+                        }
                         Command::Quit => {
                             break;
                         }

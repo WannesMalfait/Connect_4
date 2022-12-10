@@ -43,6 +43,17 @@ impl Solver {
         self.trans_table.reset();
     }
 
+    /// Reset the counter to 0.
+    pub fn reset_tt_hits(&mut self) {
+        self.tt_hits = 0;
+    }
+
+    /// Reset counters used for statistics during search.
+    pub fn reset_counters(&mut self) {
+        self.reset_node_count();
+        self.reset_tt_hits();
+    }
+
     pub fn set_book(&mut self, book: OpeningBook) {
         self.book = Some(book)
     }
@@ -197,7 +208,7 @@ impl Solver {
 
         // Check if the position is in the opening book.
         if let Some(book) = &self.book {
-            if let Some((_, score)) = book.get(pos) {
+            if let Some(score) = book.get(pos) {
                 if output {
                     println!("Position in opening book");
                 }
@@ -272,6 +283,43 @@ impl Solver {
         } else {
             Self::num_stones_left(0, pos) + score + 1
         }
+    }
+
+    /// Generate an opening book by adding all the positions up to a certain depth.
+    /// This function does not store the opening book in a file.
+    pub fn generate_book(&mut self, pos: &Position, depth: usize) {
+        match &self.book {
+            None => {
+                self.book = Some(OpeningBook::new());
+            }
+            Some(book) => {
+                if book.get(pos).is_some() {
+                    return;
+                }
+            }
+        };
+        if pos.nb_moves() as usize > depth {
+            return;
+        }
+        println!("\nAdding position to opening book...");
+        pos.display_position();
+        let score = self.solve(pos, false, true);
+        let book = self.book.as_mut().unwrap();
+        println!("Added position with score {score}");
+        book.put(pos, score);
+        for col in 0..Position::WIDTH {
+            if !pos.can_play(col) || pos.is_winning_move(col) {
+                continue;
+            }
+            let mut p2 = pos.clone();
+            p2.play_col(col);
+            self.generate_book(&p2, depth);
+        }
+    }
+
+    /// Gets the solver's opening book. Panics if it has no book.
+    pub fn get_book(&'_ self) -> &'_ OpeningBook {
+        self.book.as_ref().unwrap()
     }
 }
 
