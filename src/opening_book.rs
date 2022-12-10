@@ -112,8 +112,7 @@ impl Iterator for BookMoves<'_> {
             }
             let mut next_pos = self.pos.clone();
             next_pos.play_col(col);
-            let key = next_pos.key();
-            if self.book.get(key).is_some() {
+            if self.book.get(&next_pos).is_some() {
                 self.next_col = col + 1;
                 return Some(col);
             }
@@ -183,10 +182,19 @@ impl OpeningBook {
         Ok(())
     }
 
-    /// Get the associated value of the given `key`. If no entry was found
+    /// Get the associated value of the given position. If no entry was found
     /// it returns `None`, otherwise it returns `Some(bmove, score)`.
     #[must_use]
-    pub fn get(&self, key: u64) -> Option<(Bitboard, isize)> {
+    pub fn get(&self, pos: &Position) -> Option<(Bitboard, isize)> {
+        self.get_by_key(pos.key3())
+    }
+
+    /// Get the associated value of the given `key`. If no entry was found
+    /// it returns `None`, otherwise it returns `Some(bmove, score)`.
+    ///
+    /// WARNING: the key should be the symmetric base 3 key of the position.
+    #[must_use]
+    fn get_by_key(&self, key: u64) -> Option<(Bitboard, isize)> {
         if let Ok(pos) = self.entries.binary_search_by_key(&key, |entry| entry.pos) {
             let entry = self.entries[pos];
             Some((entry.bmove, entry.score))
@@ -197,7 +205,9 @@ impl OpeningBook {
 
     /// Insert an entry in the book for the given key of the position.
     /// If the position is already in the book, it is overwritten.
-    pub fn put(&mut self, key: u64, bmove: Bitboard, score: isize) {
+    ///
+    /// WARNING: the key should be the symmetric base 3 key of the position.
+    fn put_by_key(&mut self, key: u64, bmove: Bitboard, score: isize) {
         let entry = BookEntry {
             pos: key,
             bmove,
@@ -215,12 +225,12 @@ impl OpeningBook {
     /// Insert an entry in the book for the given position.
     /// If the position is already in the book, it is overwritten.
     #[inline]
-    pub fn put_pos(&mut self, pos: &Position, bmove: Bitboard, score: isize) {
-        self.put(pos.key(), bmove, score);
+    pub fn put(&mut self, pos: &Position, bmove: Bitboard, score: isize) {
+        self.put_by_key(pos.key3(), bmove, score);
     }
 
     /// Get the playable moves from this position that are in the book.
-    /// The moves are sorted by collumn.
+    /// The moves are sorted by column.
     #[must_use]
     pub fn book_moves_from_position(&self, pos: Position) -> BookMoves {
         BookMoves {
@@ -241,18 +251,16 @@ mod tests {
     fn adding_book_entries() {
         let mut book = OpeningBook::new();
         let mut pos = Position::new();
-        assert_eq!(book.get(pos.key()), None);
+        assert_eq!(book.get(&pos), None);
         for j in 0..20 {
             pos.play_col(j * 5 % Position::WIDTH);
-            let key = pos.key();
-            assert_eq!(book.get(key), None);
+            assert_eq!(book.get(&pos), None);
             for i in 0..Position::WIDTH {
-                println!("Inserting {key}");
                 let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
                 let score = pos.move_score(bmove) as Column;
                 // Just for testing we put in dummy score and best move.
-                book.put(key, bmove, score.into());
-                assert_eq!(book.get(key), Some((bmove, isize::from(score))));
+                book.put(&pos, bmove, score.into());
+                assert_eq!(book.get(&pos), Some((bmove, isize::from(score))));
             }
         }
         assert!(book.is_valid());
@@ -263,16 +271,14 @@ mod tests {
         let mut entries = Vec::new();
         for j in 0..20 {
             pos.play_col(j * 5 % Position::WIDTH);
-            let key = pos.key();
             // Opening book can only store one entry per position, so only one of these will get added.
             // Since the sorting is unstable, there is no guarantee about which entry is added.
             for i in 0..Position::WIDTH {
-                println!("Inserting {key}");
                 let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
                 let score = pos.move_score(bmove) as Column;
                 // Just for testing we put in dummy score and best move.
                 entries.push(BookEntry {
-                    pos: key,
+                    pos: pos.key3(),
                     bmove,
                     score: score.into(),
                 });
@@ -286,21 +292,24 @@ mod tests {
     fn book_moves() {
         let mut pos = Position::new();
         let mut book = OpeningBook::new();
-        book.put_pos(&pos, 0u64, 0);
+        book.put(&pos, 0u64, 0);
         let mut moves = book.book_moves_from_position(pos.clone());
         // No book moves in starting position.
         assert_eq!(moves.next(), None);
         // Add 2 moves in the book.
         pos.play_col(0);
-        book.put_pos(&pos, 0u64, 0);
+        book.put(&pos, 0u64, 0);
         pos = Position::new();
         pos.play_col(2);
-        book.put_pos(&pos, 0u64, 0);
+        book.put(&pos, 0u64, 0);
         pos = Position::new();
         // Look at moves from the starting position
         let mut moves = book.book_moves_from_position(pos);
         assert_eq!(moves.next(), Some(0));
         assert_eq!(moves.next(), Some(2));
+        // Key is symmetric!
+        assert_eq!(moves.next(), Some(4));
+        assert_eq!(moves.next(), Some(6));
         assert_eq!(moves.next(), None);
     }
 
@@ -308,19 +317,25 @@ mod tests {
     fn store_load_book() {
         let mut pos = Position::new();
         let mut book = OpeningBook::new();
-        book.put_pos(&pos, 0u64, 0);
+        book.put(&pos, 0u64, 0);
         let mut moves = book.book_moves_from_position(pos.clone());
         // No book moves in starting position.
         assert_eq!(moves.next(), None);
         // Add 2 moves in the book.
         pos.play_col(0);
-        book.put_pos(&pos, 0u64, 0);
+        println!("Played col 0");
+        pos.display_position();
+        book.put(&pos, 0u64, 0);
         pos = Position::new();
         pos.play_col(2);
-        book.put_pos(&pos, 0u64, 0);
+        println!("Played col 2");
+        pos.display_position();
+        book.put(&pos, 0u64, 0);
         pos = Position::new();
         pos.play_col(3);
-        book.put_pos(&pos, 0u64, 0);
+        println!("Played col 3");
+        pos.display_position();
+        book.put(&pos, 0u64, 0);
 
         let book_path = std::path::Path::new("test_book.book");
         book.store(book_path).unwrap();
@@ -335,6 +350,9 @@ mod tests {
         assert_eq!(moves.next(), Some(0));
         assert_eq!(moves.next(), Some(2));
         assert_eq!(moves.next(), Some(3));
+        // Key is symmetric!
+        assert_eq!(moves.next(), Some(4));
+        assert_eq!(moves.next(), Some(6));
         assert_eq!(moves.next(), None);
     }
 }

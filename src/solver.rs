@@ -197,7 +197,7 @@ impl Solver {
 
         // Check if the position is in the opening book.
         if let Some(book) = &self.book {
-            if let Some((_, score)) = book.get(pos.key()) {
+            if let Some((_, score)) = book.get(pos) {
                 if output {
                     println!("Position in opening book");
                 }

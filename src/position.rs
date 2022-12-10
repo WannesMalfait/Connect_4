@@ -196,7 +196,7 @@ impl Position {
         self.current_position + self.mask
     }
 
-    /// Build a symetric base 3 key. Two symetric positions will have the same key.
+    /// Build a symmetric base 3 key. Two symmetric positions will have the same key.
     ///
     /// This key is a base 3 representation of the sequence of played moves column per column,
     /// from bottom to top. The 3 digits are `top_of_colum(0)`, `current_player(1)`, `opponent(2)`.
@@ -204,7 +204,7 @@ impl Position {
     /// example: game "45" where player one played colum 4, then player two played column 5
     /// has a representation in base 3 digits : 0 0 0 1 0 2 0 0 0 or : 3*3^3 + 1*3^5
     ///
-    /// The symetric key is the mimimum key of the two keys built iterating columns from left to right
+    /// The symmetric key is the mimimum key of the two keys built iterating columns from left to right
     /// or right to left.
     ///
     /// as the last digit is always 0, we omit it and a base 3 key
