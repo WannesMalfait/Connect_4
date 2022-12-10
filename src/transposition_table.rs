@@ -67,24 +67,22 @@ impl TranspositionTable {
     /// ```
     pub fn new() -> Self {
         println!("Initialized transposition table with size: {}", Self::SIZE);
-        // If no entries are in the table and we call it from the starting position
-        // then the key is zero, which would make it seem like there is a value stored
-        // there even though there isn't.
-        let mut keys = vec![0; Self::SIZE as usize];
-        keys[0] = 1;
+        // Initialize with `Self::SIZE + 1` to guarantee that we will always see
+        // uninitialized entries as uninitialized. Using `Option<PartialKeyType>`
+        // was too slow.
         Self {
-            keys,
+            keys: vec![(Self::SIZE + 1) as PartialKeyType; Self::SIZE as usize],
             values: vec![0; Self::SIZE as usize],
         }
     }
     /// Get rid of all stored entries.
     pub fn reset(&mut self) {
         for i in 0..Self::SIZE {
-            self.keys[i as usize] = 0;
+            // Initialize with `Self::SIZE + 1` to guarantee that we will always see
+            // uninitialized entries as uninitialized.
+            self.keys[i as usize] = (Self::SIZE + 1) as PartialKeyType;
             self.values[i as usize] = 0;
         }
-        // Needed since otherwise key 0 would register as being initialized.
-        self.keys[0] = 1;
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
@@ -135,6 +133,24 @@ mod tests {
                 let score = pos.move_score(bmove) as Column;
                 tb.put(key, score);
                 assert_eq!(tb.get(key), Some(score));
+            }
+        }
+    }
+
+    #[test]
+    fn uninitialized() {
+        let tb = TranspositionTable::new();
+        for p in [3, 5, 11, 37, 53, 137] {
+            let mut pos = position::Position::new();
+            assert_eq!(tb.get(pos.key()), None);
+            for k in 0..100 {
+                let col = (k * p) as u8 % Position::WIDTH;
+                if !pos.can_play(col) {
+                    continue;
+                }
+                pos.play_col(col);
+                // Should register as uninitialized.
+                assert_eq!(tb.get(pos.key()), None);
             }
         }
     }
