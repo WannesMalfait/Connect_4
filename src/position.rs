@@ -120,6 +120,8 @@ impl Position {
     // Masks used for calculating possible moves.
     const BOTTOM_MASK: Bitboard = Self::bottom(Self::WIDTH, Self::HEIGHT);
     const BOARD_MASK: Bitboard = Self::BOTTOM_MASK * ((1u64 << Self::HEIGHT) - 1);
+    const COLUMN_MASKS: [Bitboard; Self::WIDTH as usize] =
+        Self::column_masks(0, [0; Self::WIDTH as usize]);
 }
 
 impl Position {
@@ -166,7 +168,7 @@ impl Position {
             .chars()
             .map(|m| {
                 m.to_digit(10).unwrap_or_else(|| {
-                    println!("Invalid char {}, set to collumn 1 as default", m);
+                    println!("Invalid char {}, set to column 1 as default", m);
                     1
                 }) as Column
             })
@@ -194,6 +196,51 @@ impl Position {
     #[must_use]
     pub fn key(&self) -> Bitboard {
         self.current_position + self.mask
+    }
+
+    /// Get the key from the position as if the board was mirrored.
+    ///
+    /// Example:
+    /// ```
+    /// use connect_4::position::*;
+    /// let mut pos1 = Position::new();
+    /// pos1.play_col(0);
+    /// let mut pos2 = Position::new();
+    /// pos2.play_col(6);
+    /// assert_eq!(pos1.key(), pos2.mirrored_key());
+    /// ```
+    #[must_use]
+    pub fn mirrored_key(&self) -> Bitboard {
+        Self::mirror(self.current_position) + Self::mirror(self.mask)
+    }
+
+    /// Returns the bitboard as if the position was mirrored horizontally.
+    #[must_use]
+    fn mirror(bb: Bitboard) -> Bitboard {
+        ((bb << 42) & Position::column_mask(6))
+            | ((bb << 28) & Position::column_mask(5))
+            | ((bb << 14) & Position::column_mask(4))
+            | (bb & Position::column_mask(3))
+            | ((bb >> 14) & Position::column_mask(2))
+            | ((bb >> 28) & Position::column_mask(1))
+            | ((bb >> 42) & Position::column_mask(0))
+    }
+
+    /// Check if this position can become symmetric in the future.
+    /// ### Example:
+    /// ```
+    /// use connect_4::position::*;
+    ///
+    /// let mut pos = Position::new();
+    /// assert!(pos.can_become_symmetric());
+    /// pos.play_col(2);
+    /// assert!(pos.can_become_symmetric());
+    /// pos.play_col(4);
+    /// assert!(!pos.can_become_symmetric());
+    /// ```
+    #[must_use]
+    pub fn can_become_symmetric(&self) -> bool {
+        (self.current_position & Self::mirror(self.current_position ^ self.mask)) == 0
     }
 
     /// Build a symmetric base 3 key. Two symmetric positions will have the same key.
@@ -313,6 +360,7 @@ impl Position {
             println!();
         }
     }
+
     /// Returns either ("x", "o") or ("o", "x").
     /// The first element is the current player.
     #[must_use]
@@ -436,6 +484,19 @@ impl Position {
         }
     }
 
+    #[must_use]
+    const fn column_masks(
+        col: Column,
+        mut masks: [Bitboard; Self::WIDTH as usize],
+    ) -> [Bitboard; Self::WIDTH as usize] {
+        if col == Self::WIDTH {
+            masks
+        } else {
+            masks[col as usize] = ((1u64 << Self::HEIGHT) - 1) << (col * (Self::HEIGHT + 1));
+            Self::column_masks(col + 1, masks)
+        }
+    }
+
     // return a bitboard containg a single 1 corresponding to the top cel of a given column
     #[must_use]
     fn top_mask_col(col: Column) -> Bitboard {
@@ -451,12 +512,14 @@ impl Position {
     // return a bitboard 1 on all the cells of a given column
     #[must_use]
     pub fn column_mask(col: Column) -> Bitboard {
-        ((1u64 << Self::HEIGHT) - 1) << (col * (Self::HEIGHT + 1))
+        Self::COLUMN_MASKS[col as usize]
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::position;
+
     use super::{play_result_ok, Position};
     #[test]
     fn simple_moves() {
@@ -494,5 +557,26 @@ mod tests {
         assert!(play_result_ok(result));
         // Every move loses
         assert_eq!(0u64, pos.possible_non_losing_moves());
+    }
+
+    #[test]
+    fn mirror() {
+        for p in [3, 5, 11, 37, 53, 137] {
+            let mut pos1 = position::Position::new();
+            let mut pos2 = position::Position::new();
+            for k in 0..100 {
+                let col = (k * p) as u8 % Position::WIDTH;
+                let mirrored_col = Position::WIDTH - 1 - col;
+                if !pos1.can_play(col) || !pos2.can_play(mirrored_col) {
+                    continue;
+                }
+                pos1.play_col(col);
+                pos2.play_col(mirrored_col);
+                assert_eq!(pos1.mask, Position::mirror(Position::mirror(pos1.mask)));
+                assert_eq!(pos2.mask, Position::mirror(Position::mirror(pos2.mask)));
+                assert_eq!(pos1.mirrored_key(), pos2.key());
+                assert_eq!(pos2.mirrored_key(), pos1.key());
+            }
+        }
     }
 }

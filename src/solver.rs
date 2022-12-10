@@ -115,7 +115,13 @@ impl Solver {
     }
 
     /// Main alpha-beta search function.
-    fn negamax(&mut self, pos: &Position, mut alpha: isize, mut beta: isize) -> isize {
+    fn negamax(
+        &mut self,
+        pos: &Position,
+        mut alpha: isize,
+        mut beta: isize,
+        can_be_symmetric: bool,
+    ) -> isize {
         debug_assert!(alpha < beta);
         debug_assert!(!pos.can_win_next());
         // increment number of explored nodes
@@ -170,13 +176,22 @@ impl Solver {
         for bmove in moves {
             let mut pos2 = pos.clone();
             pos2.play(bmove);
-            let score = -self.negamax(&pos2, -beta, -alpha);
+            let score = -self.negamax(&pos2, -beta, -alpha, can_be_symmetric);
             if score >= beta {
                 debug_assert!((score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) > 0);
                 self.trans_table.put(
                     key,
                     (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
                 );
+                if can_be_symmetric && pos.nb_moves() < 10 {
+                    // Also store the mirrored position in the transposition table.
+                    // If only a few moves have been made, the symmetric position is
+                    // likely to be reached in another branch.
+                    self.trans_table.put(
+                        pos.mirrored_key(),
+                        (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
+                    );
+                }
 
                 // Save a lower bound
                 return score;
@@ -223,6 +238,8 @@ impl Solver {
             max = 1;
         }
 
+        let can_be_symmetric = pos.can_become_symmetric();
+
         while min < max {
             let now = Instant::now();
             let nodes = self.get_node_count();
@@ -238,7 +255,7 @@ impl Solver {
                 println!("Searching: alpha {} beta {}", med, med + 1);
             }
             // use a null depth window to know if the actual score is greater or smaller than med
-            let r = self.negamax(pos, med, med + 1);
+            let r = self.negamax(pos, med, med + 1, can_be_symmetric);
             if r <= med {
                 max = r;
             } else {
@@ -340,7 +357,7 @@ pub mod tests {
         assert_eq!(Solver::score_to_moves_to_win(&pos, 2), 19);
         pos.play_col(3);
         assert_eq!(Solver::score_to_moves_to_win(&pos, -2), 18);
-        pos.play_col(7);
+        pos.play_col(6);
         assert_eq!(Solver::score_to_moves_to_win(&pos, 2), 18);
         pos.play_col(6);
         assert_eq!(Solver::score_to_moves_to_win(&pos, -2), 17);

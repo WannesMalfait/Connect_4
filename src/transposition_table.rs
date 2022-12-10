@@ -102,8 +102,11 @@ impl TranspositionTable {
     /// Store a key value pair in the table. Previous entries are overwritten on collision.
     pub fn put(&mut self, key: KeyType, value: ValueType) {
         let pos = Self::index(key);
-        self.keys[pos] = key as PartialKeyType; // key is possibly truncated as key_t is possibly less than key_size bits.
-        self.values[pos] = value;
+        // SAFETY: the index returned by `Self::index` is guaranteed to be valid.
+        unsafe {
+            *self.keys.get_unchecked_mut(pos) = key as PartialKeyType; // key is possibly truncated as key_t is possibly less than key_size bits.
+            *self.values.get_unchecked_mut(pos) = value;
+        }
     }
     /// Get the index for the given `key`.
     fn index(key: KeyType) -> usize {
