@@ -1,4 +1,5 @@
 use crate::position;
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// The following are functions to find the next prime factor at compile time
 
@@ -32,17 +33,26 @@ const fn next_prime(n: u64) -> u64 {
 type KeyType = u64;
 type PartialKeyType = u32;
 type ValueType = position::Column;
+type AtomicPartialKeyType = AtomicU32;
+type AtomicValueType = AtomicU8;
 
 /// Transposition Table is a simple hash map with fixed storage size.
 /// In case of collision we keep the last entry and overide the previous one.
 /// We keep only part of the key to reduce storage, but no error is possible due
 /// to the Chinese Remainder theorem.
 ///
-/// The number of stored entries is a power of two that is defined at compile time.
-/// We also define size of the entries and keys to allow optimization at compile time.
+/// The number of stored entries is the next prime after a power of two that is defined
+/// at compile time. We also define size of the entries and keys to allow optimization at
+/// compile time.
+///
+/// The Transposition table is also thread safe, due to a simple trick with xor. Instead of
+/// storing the key directly, we xor it with the data. When we then call `get(key)` we compare
+/// the key stored to the result of xor-ing the key with the value stored. If the value had been
+/// written by another thread, these will be different, and we know that we shouldn't return this
+/// data. See [this page](https://www.chessprogramming.org/Shared_Hash_Table#Xor) for more info.
 pub struct TranspositionTable {
-    keys: Vec<PartialKeyType>,
-    values: Vec<ValueType>,
+    keys: Box<[AtomicPartialKeyType]>,
+    values: Box<[AtomicValueType]>,
 }
 impl TranspositionTable {
     /// Base 2 log of the size of the Transposition Table.
@@ -71,8 +81,10 @@ impl TranspositionTable {
         // uninitialized entries as uninitialized. Using `Option<PartialKeyType>`
         // was too slow.
         Self {
-            keys: vec![(Self::SIZE + 1) as PartialKeyType; Self::SIZE as usize],
-            values: vec![0; Self::SIZE as usize],
+            keys: (0..Self::SIZE)
+                .map(|_| AtomicPartialKeyType::new(Self::SIZE as PartialKeyType + 1))
+                .collect(),
+            values: (0..Self::SIZE).map(|_| AtomicValueType::new(0)).collect(),
         }
     }
     /// Get rid of all stored entries.
@@ -80,32 +92,41 @@ impl TranspositionTable {
         for i in 0..Self::SIZE {
             // Initialize with `Self::SIZE + 1` to guarantee that we will always see
             // uninitialized entries as uninitialized.
-            self.keys[i as usize] = (Self::SIZE + 1) as PartialKeyType;
-            self.values[i as usize] = 0;
+            self.keys[i as usize] = AtomicPartialKeyType::new((Self::SIZE + 1) as PartialKeyType);
+            self.values[i as usize] = AtomicValueType::new(0);
         }
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
     #[must_use]
     pub fn get(&self, key: KeyType) -> Option<ValueType> {
-        let pos = Self::index(key);
-        // SAFETY: the index returned by `Self::index` is guaranteed to be valid.
+        let index = Self::index(key);
+        let r_key;
+        let value;
         unsafe {
-            let r_key = *self.keys.get_unchecked(pos);
-            if r_key == key as PartialKeyType {
-                Some(*self.values.get_unchecked(pos))
-            } else {
-                None
-            }
+            r_key = self.keys.get_unchecked(index).load(Ordering::Relaxed);
+            value = self.values.get_unchecked(index).load(Ordering::Relaxed);
+        }
+        // We need to use the xor trick to ensure that key and value were set by the same thread.
+        if r_key == key as PartialKeyType ^ value as PartialKeyType {
+            Some(value)
+        } else {
+            None
         }
     }
     /// Store a key value pair in the table. Previous entries are overwritten on collision.
-    pub fn put(&mut self, key: KeyType, value: ValueType) {
-        let pos = Self::index(key);
-        // SAFETY: the index returned by `Self::index` is guaranteed to be valid.
+    pub fn put(&self, key: KeyType, value: ValueType) {
+        let index = Self::index(key);
+        // Importantly, we xor with the value. This allows us to verify that we got the correct
+        // entry upon retrieval, by xor-ing again.
         unsafe {
-            *self.keys.get_unchecked_mut(pos) = key as PartialKeyType; // key is possibly truncated as key_t is possibly less than key_size bits.
-            *self.values.get_unchecked_mut(pos) = value;
+            self.keys.get_unchecked(index).store(
+                key as PartialKeyType ^ value as PartialKeyType,
+                Ordering::Relaxed,
+            );
+            self.values
+                .get_unchecked(index)
+                .store(value, Ordering::Relaxed);
         }
     }
     /// Get the index for the given `key`.
@@ -117,13 +138,14 @@ impl TranspositionTable {
 #[cfg(test)]
 mod tests {
     use position::{Column, Position};
+    use std::sync::Arc;
 
-    use crate::position;
+    use crate::{position, transposition_table::KeyType};
 
     use super::TranspositionTable;
     #[test]
     fn inserts_and_gets() {
-        let mut tb = TranspositionTable::new();
+        let tb = TranspositionTable::new();
         let mut pos = position::Position::new();
         assert_eq!(tb.get(pos.key()), None);
         for j in 0..20 {
@@ -156,5 +178,50 @@ mod tests {
                 assert_eq!(tb.get(pos.key()), None);
             }
         }
+    }
+
+    #[test]
+    fn threaded() {
+        let table = Arc::new(TranspositionTable::new());
+        let table1 = table.clone();
+        let table2 = table.clone();
+        const NUM_TRIES: usize = 1000;
+        // Both i and TranspositionTable::SIZE + i will have the same index
+        // into the transposition table. If two threads store at the same time
+        // and one ends up storing the key, while the other stores the value,
+        // then the table should return that as if there was nothing stored.
+        let join_handle1 = std::thread::spawn(move || {
+            for i in 0..NUM_TRIES {
+                table1.put(i as KeyType, 1);
+                std::thread::sleep(std::time::Duration::from_micros(500));
+            }
+        });
+        let join_handle2 = std::thread::spawn(move || {
+            for i in 0..NUM_TRIES {
+                table2.put(TranspositionTable::SIZE + i as KeyType, 2);
+                std::thread::sleep(std::time::Duration::from_micros(500));
+            }
+        });
+        join_handle1.join().unwrap();
+        join_handle2.join().unwrap();
+        let mut values = [0; NUM_TRIES];
+        for (i, value) in values.iter_mut().enumerate() {
+            match table.get(i as KeyType) {
+                Some(v) => {
+                    assert_eq!(v, 1);
+                    *value = 1;
+                }
+                None => {
+                    if let Some(v) = table.get(TranspositionTable::SIZE + i as KeyType) {
+                        assert_eq!(v, 2);
+                        *value = 2;
+                    }
+                }
+            }
+        }
+        // 0: collision (key and value come from different threads),
+        // 1: value stored by thread 1
+        // 2: value stored by thread 2
+        println!("{:?}", values);
     }
 }
