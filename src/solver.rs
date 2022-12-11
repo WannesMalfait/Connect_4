@@ -325,6 +325,7 @@ impl Solver {
         println!("Added position with score {score}");
         book.put(pos, score);
         for col in 0..Position::WIDTH {
+            let col = self.column_order[col as usize];
             if !pos.can_play(col) || pos.is_winning_move(col) {
                 continue;
             }
