@@ -322,6 +322,12 @@ impl Position {
         }
     }
 
+    /// Get the number of stones left for one player in the given position offset by `addend` moves.
+    #[inline]
+    pub fn num_stones_left(&self, addend: isize) -> isize {
+        ((Position::WIDTH * Position::HEIGHT) as isize + addend - self.nb_moves() as isize) / 2
+    }
+
     /// Indicates whether a column is playable.
     /// `col` is a 0-based index of the column to play
     /// returns `true` if the column is playable, `false` if the column is already full.

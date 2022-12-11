@@ -29,6 +29,7 @@ pub mod game_solver {
     pub struct Parser {
         solver: Solver,
         weak: bool,
+        num_threads: u8,
     }
 
     const DEFAULT_BOOK_PATH: &str = "./opening_book.book";
@@ -44,6 +45,7 @@ pub mod game_solver {
         Bench(Option<PathBuf>, Option<usize>),
         LoadBook(PathBuf),
         GenerateBook(usize, PathBuf),
+        SetNumThreads(u8),
         Quit,
     }
 
@@ -53,6 +55,7 @@ pub mod game_solver {
             Self {
                 solver: Solver::new(None),
                 weak,
+                num_threads: 1,
             }
         }
 
@@ -180,6 +183,21 @@ pub mod game_solver {
                     };
                     Some(Command::GenerateBook(depth, path.to_path_buf()))
                 }
+                "threads" => {
+                    if !recurse {
+                        return Some(Command::SetNumThreads(0));
+                    }
+                    match args.next() {
+                        None => None,
+                        Some(num) => match num.parse::<u8>() {
+                            Ok(n) => Some(Command::SetNumThreads(n)),
+                            Err(e) => {
+                                eprintln!("Expected a number of threads ({e})");
+                                None
+                            }
+                        },
+                    }
+                }
                 "quit" => Some(Command::Quit),
                 _ => {
                     eprintln!("Don't know the command: {}", first);
@@ -218,16 +236,12 @@ pub mod game_solver {
                         }
                         Command::Solve => {
                             let now = Instant::now();
-                            self.solver.reset_node_count();
                             self.solve(&pos);
-                            println!("\nNodes searched: {}", self.solver.get_node_count());
                             println!("Took {:?}", now.elapsed());
                         }
                         Command::Analyze => {
                             let now = Instant::now();
-                            self.solver.reset_node_count();
                             self.analyze(&pos);
-                            println!("Nodes searched: {}", self.solver.get_node_count());
                             println!("Took {:?}", now.elapsed());
                         }
                         Command::ToggleWeak => {
@@ -284,6 +298,12 @@ pub mod game_solver {
                                         println!("Generate an opening book to the given depth from the current position.");
                                         println!("By default the book is stored in '{DEFAULT_BOOK_PATH}', but another path can be specified.")
                                     }
+                                    Command::SetNumThreads(_) => {
+                                        println!("threads <num_threads>");
+                                        println!(
+                                            "Set the number of threads to be used by the solver."
+                                        );
+                                    }
                                     Command::Quit => {
                                         println!("Quit the program.");
                                     }
@@ -302,6 +322,7 @@ pub mod game_solver {
                                         "bench",
                                         "load-book",
                                         "generate-book",
+                                        "threads",
                                         "quit",
                                     ]
                                 );
@@ -315,7 +336,9 @@ pub mod game_solver {
                             println!("Cleared transposition table");
                         }
                         Command::Bench(path, max_lines) => {
-                            if let Err(e) = Self::handle_bench(path, max_lines, self.weak) {
+                            if let Err(e) =
+                                Self::handle_bench(path, max_lines, self.weak, self.num_threads)
+                            {
                                 eprintln!("Error while running bench: '{e}'");
                             }
                         }
@@ -341,6 +364,10 @@ pub mod game_solver {
                                     self.solver.get_book().num_entries()
                                 );
                             }
+                        }
+                        Command::SetNumThreads(n) => {
+                            println!("Set number of threads to {n}");
+                            self.num_threads = n;
                         }
                         Command::Quit => {
                             break;
@@ -373,10 +400,10 @@ pub mod game_solver {
         }
 
         fn solve(&mut self, pos: &Position) {
-            let score = self.solver.solve(pos, self.weak, true);
+            let (score, nodes) = self.solver.solve(pos, self.weak, true, self.num_threads);
             print!("\nScore is {}", score);
             self.explain_score(pos, score);
-            println!();
+            println!("\nTotal number of nodes: {nodes}");
         }
 
         fn explain_score(&mut self, pos: &Position, score: isize) {
@@ -397,13 +424,14 @@ pub mod game_solver {
             path: Option<PathBuf>,
             max_lines: Option<usize>,
             weak: bool,
+            num_threads: u8,
         ) -> std::io::Result<()> {
             if let Some(path) = path {
-                bench_file(path, max_lines, weak)?;
+                bench_file(path, max_lines, weak, num_threads)?;
             } else {
                 let paths = fs::read_dir("./benchmark_files")?;
                 for dir in paths {
-                    bench_file(dir?.path(), max_lines, weak)?;
+                    bench_file(dir?.path(), max_lines, weak, num_threads)?;
                 }
             }
             Ok(())
@@ -444,7 +472,12 @@ pub mod game_solver {
     /// The recorded times are averaged, as well as the number of nodes.
     /// These are then printed to `std_out`. If the solver returns the wrong
     /// score, an error message is printed, but the benchmark continues.
-    pub fn bench_file(path: PathBuf, max_lines: Option<usize>, weak: bool) -> std::io::Result<()> {
+    pub fn bench_file(
+        path: PathBuf,
+        max_lines: Option<usize>,
+        weak: bool,
+        num_threads: u8,
+    ) -> std::io::Result<()> {
         println!("\nStarting benchmark: {}", path.display());
         let file = File::open(path)?;
         let file = BufReader::new(file);
@@ -459,11 +492,11 @@ pub mod game_solver {
                 if let Some(pos) = Position::from_string(position_str) {
                     print!("\rProcessing line: {}...", i + 1);
                     io::stdout().flush().unwrap();
-                    solver.reset_node_count();
                     let now = Instant::now();
-                    let score = conv_score(solver.solve(&pos, weak, false), weak);
+                    let (score, num_nodes) = solver.solve(&pos, weak, false, num_threads);
+                    let score = conv_score(score, weak);
                     times.push(now.elapsed().as_secs_f64());
-                    nodes.push(solver.get_node_count() as f64);
+                    nodes.push(num_nodes as f64);
                     if let Some(expected_result) = parts.next() {
                         if let Ok(expected_result) = expected_result.parse::<isize>() {
                             if score != conv_score(expected_result, weak) {

@@ -88,12 +88,12 @@ impl TranspositionTable {
         }
     }
     /// Get rid of all stored entries.
-    pub fn reset(&mut self) {
+    pub fn reset(&self) {
         for i in 0..Self::SIZE {
             // Initialize with `Self::SIZE + 1` to guarantee that we will always see
             // uninitialized entries as uninitialized.
-            self.keys[i as usize] = AtomicPartialKeyType::new((Self::SIZE + 1) as PartialKeyType);
-            self.values[i as usize] = AtomicValueType::new(0);
+            self.keys[i as usize].store((Self::SIZE + 1) as PartialKeyType, Ordering::Relaxed);
+            self.values[i as usize].store(0, Ordering::Relaxed);
         }
     }
     /// Get the associated value of the given `key`. If no entry was found

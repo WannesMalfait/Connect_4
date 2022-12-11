@@ -1,17 +1,93 @@
+use std::sync::{
+    atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 use crate::move_sorter;
 use crate::opening_book::OpeningBook;
 use crate::position;
-use crate::transposition_table;
+use crate::transposition_table::TranspositionTable;
 use move_sorter::MoveSorter;
 use position::{Column, Position};
 
-pub struct Solver {
-    node_count: u64,
+struct Nodes(Arc<AtomicU64>);
+
+impl Clone for Nodes {
+    fn clone(&self) -> Self {
+        Self(Arc::new(AtomicU64::new(0)))
+    }
+}
+
+#[derive(Clone)]
+struct NodeCounter {
+    node_counters: Vec<Option<Arc<AtomicU64>>>,
+}
+
+impl NodeCounter {
+    fn initialize_node_counters(&mut self, threads: usize) {
+        self.node_counters = vec![None; threads];
+    }
+
+    fn add_node_counter(&mut self, thread: usize, node_counter: Arc<AtomicU64>) {
+        self.node_counters[thread] = Some(node_counter);
+    }
+
+    fn get_node_count(&self) -> u64 {
+        let mut total_nodes = 0;
+        for nodes in self.node_counters.iter().flatten() {
+            total_nodes += nodes.load(Ordering::Relaxed);
+        }
+        total_nodes
+    }
+}
+
+#[derive(Clone)]
+struct SharedContext {
+    table: Arc<TranspositionTable>,
+    abort_search: Arc<AtomicBool>,
+    score: Arc<AtomicIsize>,
+}
+
+impl SharedContext {
+    fn abort_search(&self) -> bool {
+        self.abort_search.load(Ordering::SeqCst)
+    }
+
+    fn abort_now(&self) {
+        self.abort_search.store(true, Ordering::SeqCst)
+    }
+}
+
+#[derive(Clone)]
+struct LocalContext {
+    abort: bool,
+    nodes: Nodes,
     tt_hits: u64,
-    column_order: [Column; Position::WIDTH as usize],
-    trans_table: transposition_table::TranspositionTable,
+}
+
+impl LocalContext {
+    pub fn reset_nodes(&self) {
+        self.nodes.0.store(0, Ordering::Relaxed);
+    }
+
+    pub fn increment_nodes(&self) {
+        self.nodes.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn nodes(&self) -> u64 {
+        self.nodes.0.load(Ordering::Relaxed)
+    }
+}
+
+struct Searcher {
+    shared_context: SharedContext,
+    local_context: LocalContext,
+    node_counter: NodeCounter,
+}
+
+pub struct Solver {
+    trans_table: Arc<TranspositionTable>,
     book: Option<OpeningBook>,
 }
 
@@ -22,74 +98,178 @@ impl Default for Solver {
 }
 
 impl Solver {
-    const INVALID_MOVE: isize = -1000;
+    /// Initializes the solver with a transposition table. A book can be
+    /// added with the `set_book` method.
+    #[must_use]
+    pub fn new(book: Option<OpeningBook>) -> Self {
+        Solver {
+            trans_table: Arc::new(TranspositionTable::new()),
+            book,
+        }
+    }
 
-    /// Nodes visited since last reset.
+    /// Convert a score to the number of moves till the winning player can win.
+    /// If the score is 0, then the position is a draw and the number returned is
+    /// the number of moves left for the current player.
     #[must_use]
-    pub fn get_node_count(&self) -> u64 {
-        self.node_count
+    pub fn score_to_moves_to_win(pos: &Position, score: isize) -> isize {
+        if score > 0 {
+            pos.num_stones_left(1) - score + 1
+        } else {
+            pos.num_stones_left(0) + score + 1
+        }
     }
-    /// Transposition table hits since last reset.
-    #[must_use]
-    pub fn get_tt_hits(&self) -> u64 {
-        self.tt_hits
-    }
-    /// Reset the counter to 0.
-    pub fn reset_node_count(&mut self) {
-        self.node_count = 0;
-    }
+
     /// Clear the transposition table of entries
     pub fn reset_transposition_table(&mut self) {
         self.trans_table.reset();
-    }
-
-    /// Reset the counter to 0.
-    pub fn reset_tt_hits(&mut self) {
-        self.tt_hits = 0;
-    }
-
-    /// Reset counters used for statistics during search.
-    pub fn reset_counters(&mut self) {
-        self.reset_node_count();
-        self.reset_tt_hits();
     }
 
     pub fn set_book(&mut self, book: OpeningBook) {
         self.book = Some(book)
     }
 
-    /// Initializes the solver with a transposition table and move
-    /// ordering heuristics.
-    #[must_use]
-    pub fn new(book: Option<OpeningBook>) -> Self {
-        let mut column_order = [0; Position::WIDTH as usize];
+    /// Generate an opening book by adding all the positions up to a certain depth.
+    /// This function does not store the opening book in a file.
+    pub fn generate_book(&mut self, pos: &Position, depth: usize) {
+        match &self.book {
+            None => {
+                self.book = Some(OpeningBook::new());
+            }
+            Some(book) => {
+                if book.get(pos).is_some() {
+                    return;
+                }
+            }
+        };
+        if pos.nb_moves() as usize > depth {
+            return;
+        }
+        println!("\nAdding position to opening book...");
+        pos.display_position();
+        let (score, _) = self.solve(pos, false, true, 1);
+        let book = self.book.as_mut().unwrap();
+        println!("Added position with score {score}");
+        book.put(pos, score);
+        for col in 0..Position::WIDTH {
+            let col = Searcher::COLUMN_ORDER[col as usize];
+            if !pos.can_play(col) || pos.is_winning_move(col) {
+                continue;
+            }
+            let mut p2 = pos.clone();
+            p2.play_col(col);
+            self.generate_book(&p2, depth);
+        }
+    }
+
+    /// Gets the solver's opening book. Panics if it has no book.
+    pub fn get_book(&'_ self) -> &'_ OpeningBook {
+        self.book.as_ref().unwrap()
+    }
+
+    /// Get a score for the current position, if `weak` is true, then only a weak solve
+    /// is done, i.e. we only check if it is a win a draw or a loss, but without a score.
+    /// Prints search info to `std_out` if `output` is set to `true`.
+    ///
+    /// A positive score means it's winning for the current player and a negative score means
+    /// that it's losing. A score of zero means it's a draw with best play. A score of 1 means
+    /// that the current player can win with their last stone, 2 with their second to last stone...
+    pub fn solve(
+        &mut self,
+        pos: &Position,
+        weak: bool,
+        output: bool,
+        num_threads: u8,
+    ) -> (isize, u64) {
+        // Check if we can win in one move as the negamax function does not support this case.
+        if pos.can_win_next() {
+            return (pos.num_stones_left(1), 0);
+        }
+
+        // Check if the position is in the opening book.
+        if let Some(book) = &self.book {
+            if let Some(score) = book.get(pos) {
+                if output {
+                    println!("Position in opening book");
+                }
+                return (score, 0);
+            }
+        }
+        let mut searcher = Searcher::new(self.trans_table.clone());
+        searcher.search(num_threads, output, pos, weak)
+    }
+
+    /// Get a score for all the columns that can be played by calling `solve()`.
+    pub fn analyze(&mut self, pos: &Position, weak: bool) -> Vec<isize> {
+        let mut scores = vec![Searcher::INVALID_MOVE; Position::WIDTH as usize];
+        for col in 0..Position::WIDTH {
+            if pos.can_play(col) {
+                if pos.is_winning_move(col) {
+                    scores[col as usize] = pos.num_stones_left(1);
+                } else {
+                    let mut pos2 = pos.clone();
+                    pos2.play_col(col);
+                    let (score, nodes) = self.solve(&pos2, weak, true, 1);
+                    println!("Solved with {nodes} nodes.");
+                    scores[col as usize] = -score;
+                }
+            }
+        }
+        scores
+    }
+}
+
+impl Searcher {
+    const INVALID_MOVE: isize = -1000;
+    const COLUMN_ORDER: [Column; Position::WIDTH as usize] =
+        Self::column_order(0, [0; Position::WIDTH as usize]);
+    const fn column_order(
+        i: u8,
+        mut temp_order: [Column; Position::WIDTH as usize],
+    ) -> [Column; Position::WIDTH as usize] {
+        if i == Position::WIDTH {
+            return temp_order;
+        }
         // initialize the column exploration order, starting with center columns
-        for i in 0..Position::WIDTH {
-            // example for WIDTH=7: column_order = {3, 2, 4, 1, 5, 0, 6}
-            column_order[i as usize] = (Position::WIDTH as isize / 2
-                + (1 - 2 * (i % 2) as isize) * (i as isize + 1) / 2)
-                as Column;
-        }
-        Solver {
-            node_count: 0,
-            tt_hits: 0,
-            column_order,
-            trans_table: transposition_table::TranspositionTable::new(),
-            book,
-        }
+        // example for WIDTH=7: column_order = {3, 2, 4, 1, 5, 0, 6}
+        temp_order[i as usize] = (Position::WIDTH as isize / 2
+            + (1 - 2 * (i % 2) as isize) * (i as isize + 1) / 2)
+            as Column;
+        Self::column_order(i + 1, temp_order)
     }
+}
 
-    /// Get the number of stones left for one player in the given position offset by `addend` moves.
-    #[inline]
-    fn num_stones_left(addend: isize, pos: &Position) -> isize {
-        ((Position::WIDTH * Position::HEIGHT) as isize + addend - pos.nb_moves() as isize) / 2
-    }
-
-    /// Try and look up the position in the transposition table. If it's in the tt and
-    /// the value allows us to prune, `Some(score)` is returned.
+impl Searcher {
     #[must_use]
-    fn trans_table_success(&self, key: u64, alpha: &mut isize, beta: &mut isize) -> Option<isize> {
-        let val = self.trans_table.get(key)?;
+    pub fn new(table: Arc<TranspositionTable>) -> Self {
+        Self {
+            shared_context: SharedContext {
+                table,
+                abort_search: Arc::new(AtomicBool::new(false)),
+                score: Arc::new(AtomicIsize::new(0)),
+            },
+            local_context: LocalContext {
+                abort: false,
+                nodes: Nodes(Arc::new(AtomicU64::new(0))),
+                tt_hits: 0,
+            },
+            node_counter: NodeCounter {
+                node_counters: Vec::new(),
+            },
+        }
+    }
+
+    /// Try and look up the position in the transposition table.
+    /// If a score was stored, the alpha and beta bounds are updated.
+    /// If the score stored allows us to prune, we return `Some(score)`.
+    #[must_use]
+    fn tt_try_prune(
+        table: &Arc<TranspositionTable>,
+        key: u64,
+        alpha: &mut isize,
+        beta: &mut isize,
+    ) -> Option<isize> {
+        let val = table.get(key)?;
         // The node has been visited before
         let val = val as isize;
         if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
@@ -116,7 +296,8 @@ impl Solver {
 
     /// Main alpha-beta search function.
     fn negamax(
-        &mut self,
+        local_context: &mut LocalContext,
+        shared_context: &SharedContext,
         pos: &Position,
         mut alpha: isize,
         mut beta: isize,
@@ -125,19 +306,24 @@ impl Solver {
         debug_assert!(alpha < beta);
         debug_assert!(!pos.can_win_next());
         // increment number of explored nodes
-        self.node_count += 1;
+        local_context.increment_nodes();
+
+        if local_context.nodes() % 1024 == 0 && shared_context.abort_search() {
+            local_context.abort = true;
+            return 0;
+        }
 
         let possible = pos.possible_non_losing_moves();
         // All moves lose
         if possible == 0 {
-            return -Self::num_stones_left(0, pos);
+            return -pos.num_stones_left(0);
         }
         // No stones left => draw
         if pos.nb_moves() >= Position::WIDTH * Position::HEIGHT - 2 {
             return 0;
         }
         // This is a lower bound on the score because they can't win next move
-        let min = -Self::num_stones_left(-2, pos);
+        let min = -pos.num_stones_left(-2);
         if alpha < min {
             // We are searching in [alpha;beta] window but min > alpha, so we can instead search in [min; beta] window
             alpha = min;
@@ -147,7 +333,7 @@ impl Solver {
             }
         }
         // Upper bound on the score because we can't win next move
-        let max = Self::num_stones_left(-1, pos);
+        let max = pos.num_stones_left(-1);
         if beta > max {
             // We are searching in [alpha;beta] window but beta > max, so we can instead search in [alpha; max] window
             beta = max;
@@ -158,8 +344,8 @@ impl Solver {
         }
 
         let key = pos.key();
-        if let Some(score) = self.trans_table_success(key, &mut alpha, &mut beta) {
-            self.tt_hits += 1;
+        if let Some(score) = Self::tt_try_prune(&shared_context.table, key, &mut alpha, &mut beta) {
+            local_context.tt_hits += 1;
             return score;
         }
 
@@ -168,7 +354,7 @@ impl Solver {
         // have a higher chance of getting good scores, this way the sorting
         // is faster
         for i in (0..Position::WIDTH).rev() {
-            let bmove = possible & Position::column_mask(self.column_order[i as usize]);
+            let bmove = possible & Position::column_mask(Self::COLUMN_ORDER[i as usize]);
             if bmove != 0 {
                 moves.add(bmove, pos.move_score(bmove));
             }
@@ -176,10 +362,17 @@ impl Solver {
         for bmove in moves {
             let mut pos2 = pos.clone();
             pos2.play(bmove);
-            let score = -self.negamax(&pos2, -beta, -alpha, can_be_symmetric);
+            let score = -Self::negamax(
+                local_context,
+                shared_context,
+                &pos2,
+                -beta,
+                -alpha,
+                can_be_symmetric,
+            );
             if score >= beta {
                 debug_assert!((score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) > 0);
-                self.trans_table.put(
+                shared_context.table.put(
                     key,
                     (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
                 );
@@ -187,7 +380,7 @@ impl Solver {
                     // Also store the mirrored position in the transposition table.
                     // If only a few moves have been made, the symmetric position is
                     // likely to be reached in another branch.
-                    self.trans_table.put(
+                    shared_context.table.put(
                         pos.mirrored_key(),
                         (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
                     );
@@ -203,141 +396,126 @@ impl Solver {
         }
         debug_assert!((alpha - Position::MIN_SCORE + 1) > 0);
         // Save an upper bound
-        self.trans_table
+        shared_context
+            .table
             .put(key, (alpha - Position::MIN_SCORE + 1) as Column);
         alpha
     }
 
-    /// Get a score for the current position, if `weak` is true, then only a weak solve
-    /// is done, i.e. we only check if it is a win a draw or a loss, but without a score.
-    /// Prints search info to `std_out` if `output` is set to `true`.
+    /// Create a searcher that will solve the position.
     ///
-    /// A positive score means it's winning for the current player and a negative score means
-    /// that it's losing. A score of zero means it's a draw with best play. A score of 1 means
-    /// that the current player can win with his last stone, 2 with his second to last stone...
-    pub fn solve(&mut self, pos: &Position, weak: bool, output: bool) -> isize {
-        // check if win in one move as the Negamax function does not support this case.
-        if pos.can_win_next() {
-            return Self::num_stones_left(1, pos);
-        }
-
-        // Check if the position is in the opening book.
-        if let Some(book) = &self.book {
-            if let Some(score) = book.get(pos) {
-                if output {
-                    println!("Position in opening book");
-                }
-                return score;
-            }
-        }
-
-        let mut min = -Self::num_stones_left(0, pos);
-        let mut max = Self::num_stones_left(1, pos);
+    /// The searcher will return the number of nodes it searched,
+    /// the score is stored in the shared context.
+    fn launch_searcher(
+        &mut self,
+        output: bool,
+        pos: &Position,
+        weak: bool,
+        thread_id: u8,
+    ) -> impl FnMut() -> u64 {
+        let thread_is_main = thread_id == 0;
+        let shared_context = self.shared_context.clone();
+        let mut local_context = self.local_context.clone();
+        self.node_counter
+            .add_node_counter(thread_id as usize, local_context.nodes.0.clone());
+        let node_counter = if thread_is_main {
+            Some(self.node_counter.clone())
+        } else {
+            None
+        };
+        let pos = pos.clone();
+        let mut min = -pos.num_stones_left(0);
+        let mut max = pos.num_stones_left(1);
         if weak {
             min = -1;
             max = 1;
         }
 
         let can_be_symmetric = pos.can_become_symmetric();
-
-        while min < max {
-            let now = Instant::now();
-            let nodes = self.get_node_count();
-            let tt_hits = self.get_tt_hits();
-            // iteratively narrow the min-max exploration window
-            let mut med = min + (max - min) / 2;
-            if med <= 0 && min / 2 < med {
-                med = min / 2;
-            } else if med >= 0 && max / 2 > med {
-                med = max / 2;
-            }
-            if output {
-                println!("Searching: alpha {} beta {}", med, med + 1);
-            }
-            // use a null depth window to know if the actual score is greater or smaller than med
-            let r = self.negamax(pos, med, med + 1, can_be_symmetric);
-            if r <= med {
-                max = r;
-            } else {
-                min = r;
-            }
-            if output {
-                println!(
-                    "took: {:?} with {} nodes, kn/s: {:.1}, {} tt hits",
-                    now.elapsed(),
-                    self.get_node_count() - nodes,
-                    (self.get_node_count() - nodes) as f64 / now.elapsed().as_secs_f64() / 1000.0,
-                    self.get_tt_hits() - tt_hits,
+        move || {
+            let start = Instant::now();
+            let mut nodes = 0;
+            local_context.reset_nodes();
+            while min < max {
+                let local_timer = Instant::now();
+                // iteratively narrow the min-max exploration window
+                let mut med = min + (max - min) / 2;
+                if med <= 0 && min / 2 < med {
+                    med = min / 2;
+                } else if med >= 0 && max / 2 > med {
+                    med = max / 2;
+                }
+                if output {
+                    println!(
+                        "Searching: alpha {} beta {} [min {min}, max {max}]",
+                        med,
+                        med + 1
+                    );
+                }
+                // use a null depth window to know if the actual score is greater or smaller than med
+                let r = Self::negamax(
+                    &mut local_context,
+                    &shared_context,
+                    &pos,
+                    med,
+                    med + 1,
+                    can_be_symmetric,
                 );
-            }
-        }
-        min
-    }
-
-    /// Get a score for all the columns that can be played by calling `solve()`.
-    pub fn analyze(&mut self, pos: &Position, weak: bool) -> Vec<isize> {
-        let mut scores = vec![Self::INVALID_MOVE; Position::WIDTH as usize];
-        for col in 0..Position::WIDTH {
-            if pos.can_play(col) {
-                if pos.is_winning_move(col) {
-                    scores[col as usize] = Self::num_stones_left(1, pos);
+                nodes = local_context.nodes();
+                if local_context.abort {
+                    return nodes;
+                }
+                if r <= med {
+                    max = r;
                 } else {
-                    let mut pos2 = pos.clone();
-                    pos2.play_col(col);
-                    scores[col as usize] = -self.solve(&pos2, weak, true);
+                    min = r;
+                }
+                if output && thread_is_main {
+                    let total_nodes = node_counter.as_ref().unwrap().get_node_count();
+                    let elapsed = start.elapsed();
+                    println!(
+                        "Took: {:?}, total nodes {}, kn/s: {}",
+                        local_timer.elapsed(),
+                        total_nodes,
+                        (total_nodes as u128 * 1000) / elapsed.as_millis().max(1) / 1000,
+                    );
                 }
             }
-        }
-        scores
-    }
-
-    /// Convert a score to the number of moves till the winning player can win.
-    /// Should not be called with score 0, which is a draw
-    #[must_use]
-    pub fn score_to_moves_to_win(pos: &Position, score: isize) -> isize {
-        if score > 0 {
-            Self::num_stones_left(1, pos) - score + 1
-        } else {
-            Self::num_stones_left(0, pos) + score + 1
+            if shared_context.abort_search() {
+                return nodes;
+            }
+            // We have solved the position. Alert the other threads that we are done.
+            shared_context.abort_now();
+            shared_context.score.store(min, Ordering::SeqCst);
+            nodes
         }
     }
 
-    /// Generate an opening book by adding all the positions up to a certain depth.
-    /// This function does not store the opening book in a file.
-    pub fn generate_book(&mut self, pos: &Position, depth: usize) {
-        match &self.book {
-            None => {
-                self.book = Some(OpeningBook::new());
-            }
-            Some(book) => {
-                if book.get(pos).is_some() {
-                    return;
-                }
-            }
-        };
-        if pos.nb_moves() as usize > depth {
-            return;
+    fn search(
+        &mut self,
+        num_threads: u8,
+        output: bool,
+        pos: &Position,
+        weak: bool,
+    ) -> (isize, u64) {
+        self.node_counter
+            .initialize_node_counters(num_threads as usize);
+        let mut join_handlers = vec![];
+        for i in 1..num_threads {
+            join_handlers.push(std::thread::spawn(
+                self.launch_searcher(output, pos, weak, i),
+            ));
         }
-        println!("\nAdding position to opening book...");
-        pos.display_position();
-        let score = self.solve(pos, false, true);
-        let book = self.book.as_mut().unwrap();
-        println!("Added position with score {score}");
-        book.put(pos, score);
-        for col in 0..Position::WIDTH {
-            let col = self.column_order[col as usize];
-            if !pos.can_play(col) || pos.is_winning_move(col) {
-                continue;
-            }
-            let mut p2 = pos.clone();
-            p2.play_col(col);
-            self.generate_book(&p2, depth);
+        let mut total_nodes = self.launch_searcher(output, pos, weak, 0)();
+        for join_handler in join_handlers {
+            let nodes = join_handler.join().unwrap();
+            total_nodes += nodes;
         }
-    }
 
-    /// Gets the solver's opening book. Panics if it has no book.
-    pub fn get_book(&'_ self) -> &'_ OpeningBook {
-        self.book.as_ref().unwrap()
+        (
+            self.shared_context.score.load(Ordering::Relaxed),
+            total_nodes,
+        )
     }
 }
 
@@ -346,11 +524,11 @@ pub mod tests {
     use super::*;
     #[test]
     fn column_order() {
-        let s = Solver::new(None);
         if Position::WIDTH == 7 {
-            assert_eq!(s.column_order, [3, 2, 4, 1, 5, 0, 6]);
+            assert_eq!(Searcher::COLUMN_ORDER, [3, 2, 4, 1, 5, 0, 6]);
         }
     }
+
     #[test]
     fn test_scores() {
         let mut pos = Position::new();
