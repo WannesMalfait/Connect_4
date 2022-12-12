@@ -152,7 +152,7 @@ impl Solver {
         println!("Added position with score {score}");
         book.put(pos, score);
         for col in 0..Position::WIDTH {
-            let col = Searcher::COLUMN_ORDER[col as usize];
+            let col = Searcher::COLUMN_ORDER1[col as usize];
             if !pos.can_play(col) || pos.is_winning_move(col) {
                 continue;
             }
@@ -221,9 +221,11 @@ impl Solver {
 
 impl Searcher {
     const INVALID_MOVE: isize = -1000;
-    const COLUMN_ORDER: [Column; Position::WIDTH as usize] =
-        Self::column_order(0, [0; Position::WIDTH as usize]);
-    const fn column_order(
+    const COLUMN_ORDER1: [Column; Position::WIDTH as usize] =
+        Self::column_order1(0, [0; Position::WIDTH as usize]);
+    const COLUMN_ORDER2: [Column; Position::WIDTH as usize] =
+        Self::column_order2(0, [0; Position::WIDTH as usize]);
+    const fn column_order1(
         i: u8,
         mut temp_order: [Column; Position::WIDTH as usize],
     ) -> [Column; Position::WIDTH as usize] {
@@ -235,7 +237,21 @@ impl Searcher {
         temp_order[i as usize] = (Position::WIDTH as isize / 2
             + (1 - 2 * (i % 2) as isize) * (i as isize + 1) / 2)
             as Column;
-        Self::column_order(i + 1, temp_order)
+        Self::column_order1(i + 1, temp_order)
+    }
+    const fn column_order2(
+        i: u8,
+        mut temp_order: [Column; Position::WIDTH as usize],
+    ) -> [Column; Position::WIDTH as usize] {
+        if i == Position::WIDTH {
+            return temp_order;
+        }
+        // initialize the column exploration order, starting with center columns
+        // example for WIDTH=7: column_order = {3, 4, 2, 5, 1, 6, 0}
+        temp_order[i as usize] = (Position::WIDTH as isize / 2
+            - (1 - 2 * (i % 2) as isize) * (i as isize + 1) / 2)
+            as Column;
+        Self::column_order2(i + 1, temp_order)
     }
 }
 
@@ -259,41 +275,6 @@ impl Searcher {
         }
     }
 
-    /// Try and look up the position in the transposition table.
-    /// If a score was stored, the alpha and beta bounds are updated.
-    /// If the score stored allows us to prune, we return `Some(score)`.
-    #[must_use]
-    fn tt_try_prune(
-        table: &Arc<TranspositionTable>,
-        key: u64,
-        alpha: &mut isize,
-        beta: &mut isize,
-    ) -> Option<isize> {
-        let val = table.get(key)?;
-        // The node has been visited before
-        let val = val as isize;
-        if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
-            // Lower bound was stored
-            let min = val + 2 * Position::MIN_SCORE - Position::MAX_SCORE - 2;
-            if *alpha < min {
-                *alpha = min;
-                if alpha >= beta {
-                    return Some(*alpha);
-                }
-            }
-        } else {
-            // Upper bound was stored
-            let max = val + Position::MIN_SCORE - 1;
-            if *beta > max {
-                *beta = max;
-                if alpha >= beta {
-                    return Some(*beta);
-                }
-            }
-        }
-        None
-    }
-
     /// Main alpha-beta search function.
     fn negamax(
         local_context: &mut LocalContext,
@@ -302,6 +283,7 @@ impl Searcher {
         mut alpha: isize,
         mut beta: isize,
         can_be_symmetric: bool,
+        thread_id: u8,
     ) -> isize {
         debug_assert!(alpha < beta);
         debug_assert!(!pos.can_win_next());
@@ -344,9 +326,34 @@ impl Searcher {
         }
 
         let key = pos.key();
-        if let Some(score) = Self::tt_try_prune(&shared_context.table, key, &mut alpha, &mut beta) {
+        let mut best_column = None;
+        if let Some(posinfo) = shared_context.table.get(key) {
             local_context.tt_hits += 1;
-            return score;
+            // The node has been visited before
+            let val = posinfo.score();
+            if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
+                // Lower bound was stored
+                let min = val + 2 * Position::MIN_SCORE - Position::MAX_SCORE - 2;
+                if alpha < min {
+                    alpha = min;
+                    if alpha >= beta {
+                        return alpha;
+                    }
+                }
+            } else {
+                // Upper bound was stored
+                let max = val + Position::MIN_SCORE - 1;
+                if beta > max {
+                    beta = max;
+                    if alpha >= beta {
+                        return beta;
+                    }
+                }
+            }
+            best_column = Some(posinfo.column());
+            debug_assert!(0 != possible & Position::column_mask(best_column.unwrap()));
+        } else {
+            // TODO: tt_miss counter, or some other way of getting a feel how useful our tb entries are.
         }
 
         let mut moves = MoveSorter::new();
@@ -354,12 +361,26 @@ impl Searcher {
         // have a higher chance of getting good scores, this way the sorting
         // is faster
         for i in (0..Position::WIDTH).rev() {
-            let bmove = possible & Position::column_mask(Self::COLUMN_ORDER[i as usize]);
-            if bmove != 0 {
-                moves.add(bmove, pos.move_score(bmove));
+            // TODO: other way of making threads help each other.
+            let col = if thread_id % 2 == 0 {
+                Self::COLUMN_ORDER1[i as usize]
+            } else {
+                Self::COLUMN_ORDER2[i as usize]
+            };
+            let bmove = possible & Position::column_mask(col);
+            if bmove != 0 && Some(col) != best_column {
+                moves.add(bmove, col, pos.move_score(bmove));
             }
         }
-        for bmove in moves {
+
+        if let Some(col) = best_column {
+            // This has a higher score, since there can be at most `Position::WIDTH` winning moves.
+            let bmove = possible & Position::column_mask(col);
+            moves.add(bmove, col, Position::WIDTH + 1);
+        }
+
+        let mut highest_score = None;
+        for (bmove, col) in moves {
             let mut pos2 = pos.clone();
             pos2.play(bmove);
             let score = -Self::negamax(
@@ -369,36 +390,46 @@ impl Searcher {
                 -beta,
                 -alpha,
                 can_be_symmetric,
+                thread_id,
             );
-            if score >= beta {
-                debug_assert!((score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) > 0);
-                shared_context.table.put(
-                    key,
-                    (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
-                );
-                if can_be_symmetric && pos.nb_moves() < 10 {
-                    // Also store the mirrored position in the transposition table.
-                    // If only a few moves have been made, the symmetric position is
-                    // likely to be reached in another branch.
-                    shared_context.table.put(
-                        pos.mirrored_key(),
-                        (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
-                    );
-                }
-
-                // Save a lower bound
-                return score;
-            }
             if score > alpha {
                 // We only need to search for better moves than the best so far
+                if score >= beta {
+                    // TODO: Potentially only store if better bound.
+                    debug_assert!((score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) > 0);
+                    shared_context.table.put(
+                        key,
+                        (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
+                        col,
+                    );
+                    if can_be_symmetric && pos.nb_moves() < 10 {
+                        // Also store the mirrored position in the transposition table.
+                        // If only a few moves have been made, the symmetric position is
+                        // likely to be reached in another branch.
+                        shared_context.table.put(
+                            pos.mirrored_key(),
+                            (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
+                            col,
+                        );
+                    }
+
+                    // Save a lower bound
+                    return score;
+                }
                 alpha = score;
+            }
+            if highest_score.is_none() || score > highest_score.unwrap() {
+                best_column = Some(col);
+                highest_score = Some(score);
             }
         }
         debug_assert!((alpha - Position::MIN_SCORE + 1) > 0);
         // Save an upper bound
-        shared_context
-            .table
-            .put(key, (alpha - Position::MIN_SCORE + 1) as Column);
+        shared_context.table.put(
+            key,
+            (alpha - Position::MIN_SCORE + 1) as Column,
+            best_column.unwrap(),
+        );
         alpha
     }
 
@@ -423,10 +454,16 @@ impl Searcher {
         } else {
             None
         };
+
+        // Essentially, we do a binary search for the actual score.
         let pos = pos.clone();
         let mut min = -pos.num_stones_left(0);
         let mut max = pos.num_stones_left(1);
         if weak {
+            // We only need to know if the actual score is
+            // < 0 ==> loss
+            // > 0 ==> win
+            // = 0 ==> draw
             min = -1;
             max = 1;
         }
@@ -438,21 +475,22 @@ impl Searcher {
             local_context.reset_nodes();
             while min < max {
                 let local_timer = Instant::now();
-                // iteratively narrow the min-max exploration window
+                // Compute the middle of our search window.
+                // TODO: explore making this value different for different threads.
                 let mut med = min + (max - min) / 2;
                 if med <= 0 && min / 2 < med {
                     med = min / 2;
                 } else if med >= 0 && max / 2 > med {
                     med = max / 2;
                 }
-                if output {
+                if output && thread_is_main {
                     println!(
                         "Searching: alpha {} beta {} [min {min}, max {max}]",
                         med,
                         med + 1
                     );
                 }
-                // use a null depth window to know if the actual score is greater or smaller than med
+                // Is the actual score bigger or smaller than `med`?
                 let r = Self::negamax(
                     &mut local_context,
                     &shared_context,
@@ -460,14 +498,17 @@ impl Searcher {
                     med,
                     med + 1,
                     can_be_symmetric,
+                    thread_id,
                 );
                 nodes = local_context.nodes();
                 if local_context.abort {
                     return nodes;
                 }
                 if r <= med {
+                    // Score was smaller, so update maximum.
                     max = r;
                 } else {
+                    // Score was bigger, so update minimum.
                     min = r;
                 }
                 if output && thread_is_main {
@@ -525,7 +566,8 @@ pub mod tests {
     #[test]
     fn column_order() {
         if Position::WIDTH == 7 {
-            assert_eq!(Searcher::COLUMN_ORDER, [3, 2, 4, 1, 5, 0, 6]);
+            assert_eq!(Searcher::COLUMN_ORDER1, [3, 2, 4, 1, 5, 0, 6]);
+            assert_eq!(Searcher::COLUMN_ORDER2, [3, 4, 2, 5, 1, 6, 0]);
         }
     }
 

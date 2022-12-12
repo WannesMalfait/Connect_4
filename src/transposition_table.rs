@@ -1,5 +1,4 @@
-use crate::position;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
 /// The following are functions to find the next prime factor at compile time
 
@@ -32,9 +31,37 @@ const fn next_prime(n: u64) -> u64 {
 
 type KeyType = u64;
 type PartialKeyType = u32;
-type ValueType = position::Column;
 type AtomicPartialKeyType = AtomicU32;
-type AtomicValueType = AtomicU8;
+type AtomicValueType = AtomicU16;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PosInfo {
+    /// The score in this position (either a lower bound or an upper bound)
+    score: u8,
+    /// The column from which we got this bound.
+    column: u8,
+}
+
+impl PosInfo {
+    fn new(score: u8, column: u8) -> Self {
+        Self { score, column }
+    }
+
+    fn zero() -> Self {
+        Self {
+            score: 0,
+            column: 0,
+        }
+    }
+
+    pub fn score(&self) -> isize {
+        self.score as isize
+    }
+
+    pub fn column(&self) -> u8 {
+        self.column
+    }
+}
 
 /// Transposition Table is a simple hash map with fixed storage size.
 /// In case of collision we keep the last entry and overide the previous one.
@@ -70,10 +97,11 @@ impl TranspositionTable {
     /// Create a new `TranspositionTable` with no stored entries.
     /// ```
     /// use connect_4::transposition_table::TranspositionTable;
+    /// use connect_4::transposition_table::PosInfo;
     /// let mut table = TranspositionTable::new();
     /// assert_eq!(table.get(5), None);
-    /// table.put(5, 2);
-    /// assert_eq!(table.get(5), Some(2));
+    /// table.put(5, 2, 0);
+    /// assert_eq!(table.get(5).unwrap().score() , 2);
     /// ```
     pub fn new() -> Self {
         println!("Initialized transposition table with size: {}", Self::SIZE);
@@ -84,7 +112,9 @@ impl TranspositionTable {
             keys: (0..Self::SIZE)
                 .map(|_| AtomicPartialKeyType::new(Self::SIZE as PartialKeyType + 1))
                 .collect(),
-            values: (0..Self::SIZE).map(|_| AtomicValueType::new(0)).collect(),
+            values: (0..Self::SIZE)
+                .map(|_| AtomicValueType::new(unsafe { std::mem::transmute(PosInfo::zero()) }))
+                .collect(),
         }
     }
     /// Get rid of all stored entries.
@@ -93,13 +123,16 @@ impl TranspositionTable {
             // Initialize with `Self::SIZE + 1` to guarantee that we will always see
             // uninitialized entries as uninitialized.
             self.keys[i as usize].store((Self::SIZE + 1) as PartialKeyType, Ordering::Relaxed);
-            self.values[i as usize].store(0, Ordering::Relaxed);
+            self.values[i as usize].store(
+                unsafe { std::mem::transmute(PosInfo::zero()) },
+                Ordering::Relaxed,
+            );
         }
     }
     /// Get the associated value of the given `key`. If no entry was found
     /// it returns `None`, otherwise it returns `Some(value)`.
     #[must_use]
-    pub fn get(&self, key: KeyType) -> Option<ValueType> {
+    pub fn get(&self, key: KeyType) -> Option<PosInfo> {
         let index = Self::index(key);
         let r_key;
         let value;
@@ -109,14 +142,15 @@ impl TranspositionTable {
         }
         // We need to use the xor trick to ensure that key and value were set by the same thread.
         if r_key == key as PartialKeyType ^ value as PartialKeyType {
-            Some(value)
+            Some(unsafe { std::mem::transmute(value) })
         } else {
             None
         }
     }
     /// Store a key value pair in the table. Previous entries are overwritten on collision.
-    pub fn put(&self, key: KeyType, value: ValueType) {
+    pub fn put(&self, key: KeyType, score: u8, column: u8) {
         let index = Self::index(key);
+        let value = unsafe { std::mem::transmute(PosInfo::new(score, column)) };
         // Importantly, we xor with the value. This allows us to verify that we got the correct
         // entry upon retrieval, by xor-ing again.
         unsafe {
@@ -140,7 +174,10 @@ mod tests {
     use position::{Column, Position};
     use std::sync::Arc;
 
-    use crate::{position, transposition_table::KeyType};
+    use crate::{
+        position,
+        transposition_table::{KeyType, PosInfo},
+    };
 
     use super::TranspositionTable;
     #[test]
@@ -156,8 +193,8 @@ mod tests {
             for i in 0..Position::WIDTH {
                 let bmove = pos.possible_non_losing_moves() & Position::column_mask(i);
                 let score = pos.move_score(bmove) as Column;
-                tb.put(key, score);
-                assert_eq!(tb.get(key), Some(score));
+                tb.put(key, score, i);
+                assert_eq!(tb.get(key), Some(PosInfo::new(score, i)));
             }
         }
     }
@@ -192,13 +229,13 @@ mod tests {
         // then the table should return that as if there was nothing stored.
         let join_handle1 = std::thread::spawn(move || {
             for i in 0..NUM_TRIES {
-                table1.put(i as KeyType, 1);
+                table1.put(i as KeyType, 1, 0);
                 std::thread::sleep(std::time::Duration::from_micros(500));
             }
         });
         let join_handle2 = std::thread::spawn(move || {
             for i in 0..NUM_TRIES {
-                table2.put(TranspositionTable::SIZE + i as KeyType, 2);
+                table2.put(TranspositionTable::SIZE + i as KeyType, 2, 0);
                 std::thread::sleep(std::time::Duration::from_micros(500));
             }
         });
@@ -208,12 +245,12 @@ mod tests {
         for (i, value) in values.iter_mut().enumerate() {
             match table.get(i as KeyType) {
                 Some(v) => {
-                    assert_eq!(v, 1);
+                    assert_eq!(v, PosInfo::new(1, 0));
                     *value = 1;
                 }
                 None => {
                     if let Some(v) = table.get(TranspositionTable::SIZE + i as KeyType) {
-                        assert_eq!(v, 2);
+                        assert_eq!(v, PosInfo::new(2, 0));
                         *value = 2;
                     }
                 }

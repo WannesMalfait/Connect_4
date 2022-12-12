@@ -4,11 +4,16 @@ use position::Position;
 #[derive(Clone, Copy)]
 struct Inner {
     score: u8,
+    col: position::Column,
     bmove: position::Bitboard,
 }
 impl Inner {
     fn new() -> Self {
-        Inner { score: 0, bmove: 0 }
+        Inner {
+            score: 0,
+            col: 0,
+            bmove: 0,
+        }
     }
 }
 /// This struct helps sorting the next moves
@@ -42,9 +47,9 @@ impl MoveSorter {
     }
     /// Add a move in the container with its score.
     /// You cannot add more than `Position::WIDTH` moves
-    pub fn add(&mut self, bmove: position::Bitboard, score: u8) {
+    pub fn add(&mut self, bmove: position::Bitboard, col: position::Column, score: u8) {
         let mut pos = self.size;
-        let new = Inner { score, bmove };
+        let new = Inner { score, col, bmove };
         // Shift elements to the right until we are in the right place.
         while pos != 0 && self.moves[pos - 1].score > score {
             self.moves[pos] = self.moves[pos - 1];
@@ -63,15 +68,15 @@ impl MoveSorter {
 }
 
 impl Iterator for MoveSorter {
-    type Item = position::Bitboard;
+    type Item = (position::Bitboard, position::Column);
     /// Get the next move and remove it from the collection. Moves are ordered by decreasing scores.
     /// If there are no more moves, return `None`.
-    fn next(&mut self) -> Option<position::Bitboard> {
+    fn next(&mut self) -> Option<Self::Item> {
         match self.size {
             0 => None,
             n => {
                 self.size -= 1;
-                Some(self.moves[n - 1].bmove)
+                Some((self.moves[n - 1].bmove, self.moves[n - 1].col))
             }
         }
     }
@@ -89,9 +94,9 @@ mod tests {
     fn correct_insertion_sort() {
         let mut ms = MoveSorter::new();
         for i in 0..Position::WIDTH {
-            ms.add(u64::from(i), Position::WIDTH - i + 4);
+            ms.add(u64::from(i), i, Position::WIDTH - i + 4);
         }
-        for (i, bmove) in ms.into_iter().enumerate() {
+        for (i, (bmove, _)) in ms.into_iter().enumerate() {
             assert_eq!(bmove, i as position::Bitboard);
         }
     }
