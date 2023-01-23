@@ -520,6 +520,15 @@ impl Searcher {
                         total_nodes,
                         (total_nodes as u128 * 1000) / elapsed.as_millis().max(1) / 1000,
                     );
+                    // Try and output the principal variation.
+                    print!("pv: ");
+                    let mut pos = pos.clone();
+                    while let Some(posinfo) = shared_context.table.get(pos.key()) {
+                        let best_column = posinfo.column();
+                        print!("{} ", best_column + 1);
+                        pos.play_col(best_column);
+                    }
+                    println!();
                 }
             }
             if shared_context.abort_search() {
