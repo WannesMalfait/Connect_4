@@ -2,6 +2,8 @@
 
 Ported to rust from [this](https://github.com/PascalPons/connect4)
 
+The goal of this program is to be able to determine whether a given connect 4 position is winning, lost or a draw, and in how many moves the result can be achieved. It makes use of a bitboard representation to be able to check for alignments efficiently using bitwise operations. 
+
 ## Basic usage
 
 You can get information about the program using
@@ -32,25 +34,31 @@ Current position:
 ...oo..
 
 > solve
-Searching: alpha -9 beta -8
-took: 49.8515ms with 234271 nodes, kn/s: 4699.3
-Searching: alpha 10 beta 11
-took: 4.7764ms with 32857 nodes, kn/s: 6878.3
-Searching: alpha 5 beta 6
-took: 101.0962ms with 907167 nodes, kn/s: 8973.3
-Searching: alpha -4 beta -3
-took: 333.6178ms with 3249028 nodes, kn/s: 9738.8
-Searching: alpha 2 beta 3
-took: 1.9292213s with 18971888 nodes, kn/s: 9834.0
-Searching: alpha -1 beta 0
-took: 1.8098913s with 16930931 nodes, kn/s: 9354.7
-Searching: alpha 1 beta 2
-took: 1.9505654s with 18699356 nodes, kn/s: 9586.6
+Searching: alpha -9 beta -8 [min -19, max 20]
+Took: 30.753895ms, total nodes 234400, kn/s: 7813
+pv: 3 6 7 4 4 
+Searching: alpha 10 beta 11 [min -8, max 20]
+Took: 3.227257ms, total nodes 264222, kn/s: 8006
+pv: 3 6 7 4 4 5 5 6 4 4 3 3 3 5 3 3 5 5 2 2 
+Searching: alpha 5 beta 6 [min -8, max 10]
+Took: 108.404003ms, total nodes 1139648, kn/s: 8025
+pv: 3 6 7 4 4 5 5 6 4 4 3 5 5 5 2 3 3 3 2 3 2 2 6 6 1 1 1 
+Searching: alpha -4 beta -3 [min -8, max 5]
+Took: 399.142056ms, total nodes 4393337, kn/s: 8120
+pv: 3 6 7 4 
+Searching: alpha 2 beta 3 [min -3, max 5]
+Took: 2.058254278s, total nodes 21736819, kn/s: 8363
+pv: 3 6 7 3 4 4 4 3 
+Searching: alpha -1 beta 0 [min -3, max 2]
+Took: 2.111754726s, total nodes 39002773, kn/s: 8279
+pv: 3 6 7 
+Searching: alpha 1 beta 2 [min 0, max 2]
+Took: 2.39107231s, total nodes 58487426, kn/s: 8235
+pv: 3 6 7 3 
 
 Score is 2, which means 'x' can win in 19 move(s)
-
-Nodes searched: 59025498
-Took 6.1940141s
+Total number of nodes: 58487426
+Took 7.102748709s
 ```
 
 ### Benchmark
@@ -87,6 +95,11 @@ The `generate-book` command can be used to generate a book from the current posi
 > generate-book 3
 ```
 
+### Multiple Threads
+The number of threads can be set using the `threads` command. At the moment, the searcher only benefits from having 2 threads instead of 1. Adding more threads will only slow down the searcher. Utilizing multiple threads more effectively is part of the future plans. The idea is to do a "P-ary" search for the score of the position, instead of the current binary search.
+
 ## Plans
-- Adding some form of multi-threading is planned (probably something like [lazy SMP](https://www.chessprogramming.org/Lazy_SMP)). 
+- Improve the multithreaded search.
+- Use `Clap` to do the argument parsing instead of doing everything manually. This should make the help messages better, and make the code more maintainable.
+- Improve the opening book generation. At the moment it doesn't work properly if a (partial) opening book is already loaded. Ideally it should just expand the existing opening book, to the requested depth.
 - If you have your own ideas that you want to add, feel free to make a pull request or create an issue.
