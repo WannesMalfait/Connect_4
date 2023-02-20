@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
+use crate::position::Position;
+
 /// The following are functions to find the next prime factor at compile time
 
 const fn med(min: u64, max: u64) -> u64 {
@@ -163,6 +165,29 @@ impl TranspositionTable {
                 .store(value, Ordering::Relaxed);
         }
     }
+
+    /// Same as put, but we first query the hashtable to see if this is actually a better bound.
+    pub fn put_checked(&self, key: KeyType, score: u8, column: u8, is_upper_bound: bool) {
+        if let Some(pos_info) = self.get(key) {
+            // Check if the new score is a better bound.
+            let val = pos_info.score();
+            if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
+                // Lower bound was stored.
+                // if is_upper_bound {
+                //     // Prefer storing lower bounds over upper bounds.
+                //     return
+                // }
+                if ! is_upper_bound && val >= score as isize{
+                    // The lower bound stored was better.
+                    return;
+                }
+            } else if val <= score as isize {
+                return;
+            }
+        }
+        self.put(key, score, column)
+    }
+
     /// Get the index for the given `key`.
     fn index(key: KeyType) -> usize {
         (key % Self::SIZE) as usize

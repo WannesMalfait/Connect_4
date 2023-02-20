@@ -397,19 +397,21 @@ impl Searcher {
                 if score >= beta {
                     // TODO: Potentially only store if better bound.
                     debug_assert!((score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) > 0);
-                    shared_context.table.put(
+                    shared_context.table.put_checked(
                         key,
                         (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
                         col,
+                        false,
                     );
                     if can_be_symmetric && pos.nb_moves() < 10 {
                         // Also store the mirrored position in the transposition table.
                         // If only a few moves have been made, the symmetric position is
                         // likely to be reached in another branch.
-                        shared_context.table.put(
+                        shared_context.table.put_checked(
                             pos.mirrored_key(),
                             (score + Position::MAX_SCORE - 2 * Position::MIN_SCORE + 2) as Column,
                             col,
+                            false,
                         );
                     }
 
@@ -425,10 +427,11 @@ impl Searcher {
         }
         debug_assert!((alpha - Position::MIN_SCORE + 1) > 0);
         // Save an upper bound
-        shared_context.table.put(
+        shared_context.table.put_checked(
             key,
             (alpha - Position::MIN_SCORE + 1) as Column,
             best_column.unwrap(),
+            true,
         );
         alpha
     }
