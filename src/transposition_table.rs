@@ -173,15 +173,12 @@ impl TranspositionTable {
             let val = pos_info.score();
             if val > Position::MAX_SCORE - Position::MIN_SCORE + 1 {
                 // Lower bound was stored.
-                // if is_upper_bound {
-                //     // Prefer storing lower bounds over upper bounds.
-                //     return
-                // }
                 if ! is_upper_bound && val >= score as isize{
                     // The lower bound stored was better.
                     return;
                 }
             } else if val <= score as isize {
+                // The upper bound stored was better.
                 return;
             }
         }
