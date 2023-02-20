@@ -357,16 +357,16 @@ impl Searcher {
         }
 
         let mut moves = MoveSorter::new();
+        // Add some randomness to the search in order to saturate the search tree.
+        let collum_order = if thread_id % 2 == 0 || local_context.nodes() % thread_id as u64 == 2 {
+            Self::COLUMN_ORDER1
+        } else {
+            Self::COLUMN_ORDER2
+        };
         // Add the moves to the sorter in reverse order, because the last moves
         // have a higher chance of getting good scores, this way the sorting
         // is faster
-        for i in (0..Position::WIDTH).rev() {
-            // TODO: other way of making threads help each other.
-            let col = if thread_id % 2 == 0 {
-                Self::COLUMN_ORDER1[i as usize]
-            } else {
-                Self::COLUMN_ORDER2[i as usize]
-            };
+        for &col in collum_order.iter().rev() {
             let bmove = possible & Position::column_mask(col);
             if bmove != 0 && Some(col) != best_column {
                 moves.add(bmove, col, pos.move_score(bmove));
@@ -501,16 +501,6 @@ impl Searcher {
                     thread_id,
                 );
                 nodes = local_context.nodes();
-                if local_context.abort {
-                    return nodes;
-                }
-                if r <= med {
-                    // Score was smaller, so update maximum.
-                    max = r;
-                } else {
-                    // Score was bigger, so update minimum.
-                    min = r;
-                }
                 if output && thread_is_main {
                     let total_nodes = node_counter.as_ref().unwrap().get_node_count();
                     let elapsed = start.elapsed();
@@ -529,6 +519,16 @@ impl Searcher {
                         pos.play_col(best_column);
                     }
                     println!();
+                }
+                if local_context.abort {
+                    return nodes;
+                }
+                if r <= med {
+                    // Score was smaller, so update maximum.
+                    max = r;
+                } else {
+                    // Score was bigger, so update minimum.
+                    min = r;
                 }
             }
             if shared_context.abort_search() {
