@@ -70,7 +70,7 @@ pub mod game_solver {
                         .collect::<Result<Vec<position::Column>, _>>()
                     {
                         Err(e) => {
-                            eprintln!("Moves should be numbers, got: {}", e);
+                            eprintln!("Moves should be numbers, got: {e}");
                             return None;
                         }
                         Ok(v) => v,
@@ -83,7 +83,7 @@ pub mod game_solver {
                         .collect::<Result<Vec<position::Column>, _>>()
                     {
                         Err(e) => {
-                            eprintln!("Moves should be numbers, got: {}", e);
+                            eprintln!("Moves should be numbers, got: {e}");
                             return None;
                         }
                         Ok(v) => v,
@@ -200,7 +200,7 @@ pub mod game_solver {
                 }
                 "quit" => Some(Command::Quit),
                 _ => {
-                    eprintln!("Don't know the command: {}", first);
+                    eprintln!("Don't know the command: {first}");
                     if recurse {
                         Some(Command::Help(None))
                     } else {
@@ -221,7 +221,7 @@ pub mod game_solver {
                     match command {
                         Command::PlayMoves(moves) => {
                             if position::play_result_ok(pos.play_sequence(&moves)) {
-                                println!("Played columns: {:?}", moves);
+                                println!("Played columns: {moves:?}");
                             }
                             println!("\nCurrent position:");
                             pos.display_position();
@@ -229,7 +229,7 @@ pub mod game_solver {
                         Command::SetPosition(moves) => {
                             pos = Position::new();
                             if position::play_result_ok(pos.play_sequence(&moves)) {
-                                println!("Played columns: {:?}", moves);
+                                println!("Played columns: {moves:?}");
                             }
                             println!("\nCurrent position:");
                             pos.display_position();
@@ -386,12 +386,12 @@ pub mod game_solver {
             if let Some(mut max) = scores.first() {
                 print!("\nScores for the playable columns: ");
                 for score in &scores {
-                    print!(" {} ", score);
+                    print!(" {score} ");
                     if score > max {
                         max = score;
                     }
                 }
-                print!("\nThe best score is: {}", max);
+                print!("\nThe best score is: {max}");
                 self.explain_score(pos, *max);
             } else {
                 println!("No playable columns");
@@ -401,7 +401,7 @@ pub mod game_solver {
 
         fn solve(&mut self, pos: &Position) {
             let (score, nodes) = self.solver.solve(pos, self.weak, true, self.num_threads);
-            print!("\nScore is {}", score);
+            print!("\nScore is {score}");
             self.explain_score(pos, score);
             println!("\nTotal number of nodes: {nodes}");
         }
@@ -512,7 +512,7 @@ pub mod game_solver {
                     }
                 }
             } else {
-                eprintln!("Couldn't parse line {}: {}", i, line);
+                eprintln!("Couldn't parse line {i}: {line}");
             }
             if i + 1 == max_lines {
                 break;

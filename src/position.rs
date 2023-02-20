@@ -102,7 +102,7 @@ pub fn play_result_ok(result: PlayResult) -> bool {
             false
         }
         PlayResult::AlreadyWinning(col) => {
-            eprintln!("Playing column {} leads to an already won position", col);
+            eprintln!("Playing column {col} leads to an already won position");
             false
         }
     }
@@ -168,7 +168,7 @@ impl Position {
             .chars()
             .map(|m| {
                 m.to_digit(10).unwrap_or_else(|| {
-                    println!("Invalid char {}, set to column 1 as default", m);
+                    println!("Invalid char {m}, set to column 1 as default");
                     1
                 }) as Column
             })
@@ -390,10 +390,10 @@ impl Position {
                 } else {
                     match self.current_position & (1u64 << (col + row * (Self::HEIGHT + 1))) {
                         0 => {
-                            print!("{}", us);
+                            print!("{us}");
                         }
                         _ => {
-                            print!("{}", them);
+                            print!("{them}");
                         }
                     }
                 }

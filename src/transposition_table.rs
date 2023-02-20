@@ -259,6 +259,6 @@ mod tests {
         // 0: collision (key and value come from different threads),
         // 1: value stored by thread 1
         // 2: value stored by thread 2
-        println!("{:?}", values);
+        println!("{values:?}");
     }
 }
