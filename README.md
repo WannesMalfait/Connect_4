@@ -2,26 +2,31 @@
 
 Ported to rust from [this](https://github.com/PascalPons/connect4)
 
-The goal of this program is to be able to determine whether a given connect 4 position is winning, lost or a draw, and in how many moves the result can be achieved. It makes use of a bitboard representation to be able to check for alignments efficiently using bitwise operations. 
+The goal of this program is to be able to determine whether a given connect 4 position is winning, lost or a draw, and in how many moves the result can be achieved. It makes use of a bitboard representation to be able to check for alignments efficiently using bitwise operations.
 
 ## Basic usage
 
 You can get information about the program using
-```
+
+```terminal
 > help
 ```
 
 To set up a position you can use `position` which will play the given moves from the starting position:
-```
+
+```terminal
 > position 4 4 5
 ```
+
 To make some moves from the current position you can use `moves/play/move`
-```
+
+```terminal
 > play 7 5 1 2
 ```
 
 To get a score for the current position use `solve`, to get scores for all the columns use `analyze`.
-```
+
+```terminal
 > play 4 4 5
 Played columns: [4, 4, 5]
 
@@ -64,7 +69,8 @@ Took 7.102748709s
 ### Benchmark
 
 To test the performance of the solver you can run a benchmark on one of the test files. The bench is run using the strong or weak solver depending on the current setting. The weak solver only calculates whether the position is a win, draw or loss, which makes it faster. You can toggle it using `toggle-weak`:
-```
+
+```terminal
 > toggle-weak
 Weak set to true
 
@@ -73,32 +79,39 @@ Weak set to false
 
 > bench ./benchmark_files/begin_easy
 ```
+
 You can specify the maximum number of lines to solve if you want a faster result. Use "all" instead of a file path to run all the benchmarks. This searches for benchmarks in `./benchmark_files/`.
-```
+
+```terminal
 bench all 100
 ```
 
 ### Opening Books
 
 In the starting position, it can take a long time to find the best move. For this reason an opening book can be loaded, which knows the best moves in starting positions. An opening book is a file where each line is an entry with three values.
-```
+
+```terminal
 position_key best_move score
 ```
 
 By default, the program looks for a book `./opening_book.book`, but a custom path can be specified:
-```
+
+```terminal
 > load-book ./my_awesome_openings.book
 ```
 
 The `generate-book` command can be used to generate a book from the current position to a given depth (this can take a long time!):
-```
+
+```terminal
 > generate-book 3
 ```
 
 ### Multiple Threads
-The number of threads can be set using the `threads` command. At the moment, the searcher only benefits from having 2 threads instead of 1. Adding more threads will only slow down the searcher. Utilizing multiple threads more effectively is part of the future plans. The idea is to do a "P-ary" search for the score of the position, instead of the current binary search.
+
+The number of threads can be set using the `threads` command. The threading is not yet optimal, but still gives a decent improvement.
 
 ## Plans
+
 - Improve the multithreaded search.
 - Use `Clap` to do the argument parsing instead of doing everything manually. This should make the help messages better, and make the code more maintainable.
 - Improve the opening book generation. At the moment it doesn't work properly if a (partial) opening book is already loaded. Ideally it should just expand the existing opening book, to the requested depth.
